@@ -3,6 +3,7 @@ import { Canvas, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { useStore } from '../store'
+import { useScene } from '../theme'
 import { FIELD_INFO, modeAmp, patchGeo, resonance, turboCss, type FieldKind, type PatchGeo } from './fields'
 import { DEFAULT_PLANE, FieldOverlay, PLANE_LABEL, type PlaneKind } from './FieldOverlay'
 import type { GeoObject } from '../types'
@@ -10,7 +11,7 @@ import { Box, Cursor, Cyl, Fit, Grid as GridIcon, Layers, Move, Port, Redo, Shee
 
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1)
 
-type ViewName = 'iso' | 'top' | 'front' | 'right'
+export type ViewName = 'iso' | 'top' | 'front' | 'right'
 const C0 = 299.792458 // mm·GHz
 
 function sceneExtent(objs: GeoObject[]) {
@@ -26,9 +27,10 @@ function sceneExtent(objs: GeoObject[]) {
   return { c, r: Math.max(b.getSize(new THREE.Vector3()).length() / 2, 10), box: b }
 }
 
-function CameraRig({ view, nonce }: { view: ViewName; nonce: number }) {
+export function CameraRig({ view, nonce, objects: given }: { view: ViewName; nonce: number; objects?: GeoObject[] }) {
   const { camera, controls } = useThree() as any
-  const objects = useStore((s) => s.project.objects)
+  const stored = useStore((s) => s.project.objects)
+  const objects = given ?? stored
   useEffect(() => {
     const { c, r } = sceneExtent(objects)
     const d = r * 2.6
@@ -47,7 +49,8 @@ function CameraRig({ view, nonce }: { view: ViewName; nonce: number }) {
   return null
 }
 
-function Shape({ o, selected, wire: wireAll, ghost, mesh, onSelect }: { o: GeoObject; selected: boolean; wire: boolean; ghost: 'off' | 'dielectric' | 'all'; mesh: number; onSelect: () => void }) {
+export function Shape({ o, selected, wire: wireAll, ghost, mesh, onSelect }: { o: GeoObject; selected: boolean; wire: boolean; ghost: 'off' | 'dielectric' | 'all'; mesh: number; onSelect: () => void }) {
+  const sc = useScene()
   const pec = o.material === 'pec' || o.material === 'copper'
   const color = o.color ?? (pec ? '#d9a03f' : '#b9cdb4')
   const edge = selected ? '#c2541e' : pec ? '#8a6420' : '#6f8a68'
@@ -92,7 +95,7 @@ function Shape({ o, selected, wire: wireAll, ghost, mesh, onSelect }: { o: GeoOb
       {mesh > 0 && o.kind !== 'cylinder' && (
         <mesh>
           <boxGeometry args={[sx, sy, sz, seg(sx), seg(sy), o.kind === 'sheet' ? 1 : Math.max(2, seg(sz))]} />
-          <meshBasicMaterial color="#14213d" wireframe transparent opacity={0.22} />
+          <meshBasicMaterial color={sc.ink} wireframe transparent opacity={0.22} />
         </mesh>
       )}
     </group>
@@ -100,6 +103,7 @@ function Shape({ o, selected, wire: wireAll, ghost, mesh, onSelect }: { o: GeoOb
 }
 
 function AirBox({ pad }: { pad: number }) {
+  const sc = useScene()
   const objects = useStore((s) => s.project.objects)
   const { box } = sceneExtent(objects)
   const size = box.getSize(new THREE.Vector3()).addScalar(2 * pad)
@@ -108,7 +112,7 @@ function AirBox({ pad }: { pad: number }) {
     <mesh position={c}>
       <boxGeometry args={[size.x, size.y, size.z]} />
       <meshBasicMaterial transparent opacity={0} depthWrite={false} />
-      <Edges color="#2c5d9e" lineWidth={1} />
+      <Edges color={sc.air} lineWidth={1} />
     </mesh>
   )
 }
@@ -116,6 +120,7 @@ function AirBox({ pad }: { pad: number }) {
 export interface FieldState { g: PatchGeo; kind: FieldKind; plane: PlaneKind; amp: number; showMag: boolean; showVec: boolean; animate: boolean }
 
 function Scene({ mode, wire, mesh, showGrid, air, view, nonce, field }: { mode: 'select' | 'move'; wire: boolean; mesh: number; showGrid: boolean; air: number; view: ViewName; nonce: number; field: FieldState | null }) {
+  const sc = useScene()
   const { project, selectedId, select, updateObject } = useStore()
   const refs = useRef<Record<string, THREE.Object3D | null>>({})
   const sel = project.objects.find((o) => o.id === selectedId)
@@ -129,7 +134,7 @@ function Scene({ mode, wire, mesh, showGrid, air, view, nonce, field }: { mode: 
       <CameraRig view={view} nonce={nonce} />
       {showGrid && (
         <Grid rotation={[Math.PI / 2, 0, 0]} position={[0, 0, -0.05]} args={[400, 400]} cellSize={2} sectionSize={10}
-          cellColor="#dfe4ec" sectionColor="#c7cfdb" fadeDistance={260} infiniteGrid />
+          cellColor={sc.cell} sectionColor={sc.section} fadeDistance={260} infiniteGrid />
       )}
       <group onPointerMissed={() => select(null)}>
         {project.objects.filter((o) => o.visible !== false).map((o) => (
@@ -168,6 +173,7 @@ function MoveGizmo({ target, onCommit }: { obj: GeoObject; target: THREE.Object3
 }
 
 export default function Viewport3D() {
+  const sc = useScene()
   const project = useStore((s) => s.project)
   const sel = useStore((s) => s.project.objects.find((o) => o.id === s.selectedId))
   const { undo, redo } = useStore()
@@ -248,7 +254,7 @@ export default function Viewport3D() {
         </div>
       </div>
       <Canvas camera={{ fov: 35, near: 0.1, far: 5000, position: [80, -100, 90] }} dpr={[1, 2]} gl={{ antialias: true }}>
-        <color attach="background" args={['#f3f5f9']} />
+        <color attach="background" args={[sc.background]} />
         <Scene mode={mode} wire={wire} mesh={meshOn ? meshSize : 0} showGrid={grid} air={air ? pad : 0} view={view} nonce={nonce} field={field} />
       </Canvas>
       {fieldKind && (

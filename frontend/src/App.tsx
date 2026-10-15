@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { exportUrl, loadCaps } from './api'
 import { useStore } from './store'
+import { useExplorer } from './explorer/store'
 import { Composer, TopBar } from './components/Shell'
 import SetupPage from './setup/SetupPage'
 import { AnalyzePage, ResultsPage, SolvePage, VerifyPage } from './pages/RunPages'
@@ -14,6 +15,7 @@ export default function App() {
     if (q === 'Export report') { window.open(exportUrl('report'), '_blank'); return true }
     if (q === 'Start a new design') {
       st.resetRun(null)
+      useExplorer.getState().reset(null)
       st.setView('setup', true)
       st.pushChat({ role: 'solver', text: 'Back to the Model tab. Edit the geometry or goals and press Run.' })
       return true

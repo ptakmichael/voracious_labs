@@ -1,3 +1,19 @@
+# Smart EM: pitch demo
+
+**Launch it** (needs Node 18+):
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open <http://localhost:5173/demo.html> in full screen (F11, 1920×1080 works best), drag
+`demo/Islam_Shikha_2022_2.4GHz_patch_arXiv_2211.13096.pdf` onto the page, then press **Tab** and **Enter** in the chat.
+The step-by-step run sheet is in [`demo/README.md`](demo/README.md). Front end only, all numbers come from a mock model.
+
+---
+
 # Smart EM Solver: demo web app
 
 A proof of concept of the Smart EM Solver workflow: **Model (setup) → Analyze → Solve → Verify → Results**, with a live
@@ -82,6 +98,24 @@ Other knobs: `EMSOLVER_MODEL` (Claude model, default `claude-opus-5-5`), `EMSOLV
 5. **Results** shows "Goal met and verified (MOCK)", S11 with the error band, Smith chart, impedance, VSWR,
    far-field, the run summary and the exports.
 
+## 3D explorer and effect matrix
+
+After a run, **Results** has four tabs: Summary, **3D explorer**, **Effect matrix** and Exports (see `EXPLORER_README.md`).
+
+- After a verified run, the backend computes a finite-difference Jacobian in the background: 2 coarse runs per watched base
+  variable (`L_res, W, feed_x, h, eps_r, margin`), within a compute budget (default 20) and the autonomy setting.
+  With *Ask me first*, you get a Compute button that shows the run count and time estimate.
+- Custom variables (`feed_ratio = feed_x / (L_res / 2)` with a hold-constant set) get their effects from the chain rule.
+  Custom metrics (`-10 - max(S11_dB, 2.40, 2.48)`) are evaluated on the existing runs. Both use a safe AST evaluator
+  (`expr.py`, no `eval`) and are saved per project in `backend/runs/explorer/<project>.json`.
+- Click a matrix cell for its drill-down: a response surface from verified runs plus the FD gradient, "reach this target",
+  the Smith-chart trajectory for impedance metrics, and Verify / Apply.
+- Chat: "what does feed_x do?", "what controls the resonance?", "define aspect = W / L_res holding L_res",
+  "add metric gm = -10 - max(S11_dB, 2.40, 2.48) unit dB", "color handles by Re Zin", "overlay current",
+  "show feed_ratio vs Re Zin", "reach Re Zin = 50 using feed_ratio".
+- The mock sets the input resistance from the feed position (R_edge sin²(π·feed_ratio/2), R_edge ≈ 176 Ω), adds a
+  small probe reactance and a weak ground-margin effect, and adds tiny deterministic noise.
+
 ## Layout
 
 ```
@@ -92,11 +126,16 @@ backend/src/emsolver/
   orchestrator.py  Claude tool-use orchestrator + scripted fallback (same tools)
   chat.py          intent parser for commands + Claude for free-form questions
   exports.py       .s1p, YAML, HTML report, reproduction script
+  expr.py          safe expression language (units, band functions, cycle detection)
+  family.py        patch family: base variables ↔ geometry, dimension-handle metadata
+  metrics.py       metric catalog and extraction from S-parameters
+  explorer.py      Jacobian, chain rule, response surfaces, target solve, registries
   app.py           FastAPI REST + Server-Sent Events
   cli.py           headless `emsolver`
 frontend/src/
   setup/           3D modeler (react-three-fiber), geometry tree, properties, settings, wizard
   pages/           Analyze, Solve, Verify, Results
+  explorer/        3D explorer, effect matrix, builders
   components/      top bar, chat composer, event log, SVG charts (S11, Smith, polar)
 ```
 

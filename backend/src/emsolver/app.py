@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response, Streami
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import chat, exports
+from . import chat, explorer, exports
 from .orchestrator import PROVIDER_LABEL, model_name, provider, run_pipeline
 from .pipeline import Run
 from .problem import MATERIALS, patch_template
@@ -41,6 +41,58 @@ class ChatReq(BaseModel):
     project: dict | None = None
 
 
+class VariableReq(BaseModel):
+    name: str
+    expression: str
+    hold_constant: list[str] = []
+    unit: str | None = None
+    run_id: str | None = None
+
+
+class MetricReq(BaseModel):
+    name: str
+    expression: str
+    unit: str | None = None
+    run_id: str | None = None
+
+
+class PreviewReq(BaseModel):
+    kind: str  # "variable" | "metric"
+    name: str = ""
+    expression: str = ""
+    hold_constant: list[str] = []
+    unit: str | None = None
+    run_id: str | None = None
+
+
+class ExplorerSettingsReq(BaseModel):
+    watched: list[str] | None = None
+    budget: int | None = None
+
+
+class JacobianReq(BaseModel):
+    variables: list[str] | None = None
+
+
+class SurfaceReq(BaseModel):
+    variable: str
+    metric: str
+    n_points: int = 3
+    range_pct: float = 5.0
+
+
+class TargetReq(BaseModel):
+    metric: str
+    value: float
+    variable: str
+
+
+class PointReq(BaseModel):
+    variable: str
+    value: float
+    metric: str = ""
+
+
 class ApproveReq(BaseModel):
     target: str | None = None
     approved: bool = True
@@ -69,8 +121,18 @@ def template_patch(req: PatchReq):
 async def start_run(req: RunReq):
     run = Run(req.project, req.speed)
     RUNS[run.id] = run
-    TASKS[run.id] = asyncio.create_task(run_pipeline(run, req.scripted))
+    TASKS[run.id] = asyncio.create_task(_pipeline_then_explore(run, req.scripted))
     return {"run_id": run.id}
+
+
+async def _pipeline_then_explore(run: Run, scripted: bool):
+    await run_pipeline(run, scripted)
+    try:  # background sensitivities after a verified run (EXPLORER_README §2.7)
+        await explorer.auto_precompute(run)
+    except Exception as e:  # never turn a finished run into a failure
+        import traceback
+        traceback.print_exc()
+        await run.emit("error", {"message": f"Effect-matrix precompute failed: {e}", "where": "explorer"})
 
 
 def get_run(rid: str) -> Run:
@@ -159,6 +221,168 @@ async def cancel(rid: str):
     run.cancelled = True
     run.paused.set()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------- 3D explorer + effect matrix
+def _explorer(rid: str) -> explorer.Explorer:
+    run = get_run(rid)
+    try:
+        return explorer.for_run(run)
+    except explorer.ExplorerError as e:
+        raise HTTPException(400, str(e))
+
+
+def _bad(e: Exception):
+    raise HTTPException(400, getattr(e, "msg", None) or str(e))
+
+
+def _ctx(pid: str, run_id: str | None) -> tuple[dict, explorer.Explorer | None]:
+    """Goal + explorer for registry edits: the given run, else the latest finished run of this project."""
+    run = RUNS.get(run_id) if run_id else None
+    if run is None:
+        done = [r for r in RUNS.values() if r.project.get("name") == pid and r.primary]
+        run = done[-1] if done else None
+    if run is None:
+        return {"threshold_db": -10, "f1": 2.4, "f2": 2.48}, None
+    try:
+        return run.goal, explorer.for_run(run)
+    except explorer.ExplorerError:
+        return run.goal, None
+
+
+@app.get("/api/projects/{pid}/variables")
+def list_variables(pid: str, run_id: str | None = None):
+    _, ex = _ctx(pid, run_id)
+    if ex:
+        return ex.variables_view()
+    from .family import BASE_VARS
+    reg = explorer.load_registry(pid)
+    return [{**b, "kind": "base"} for b in BASE_VARS] + reg["variables"]
+
+
+@app.post("/api/projects/{pid}/variables")
+def create_variable(pid: str, req: VariableReq):
+    goal, ex = _ctx(pid, req.run_id)
+    try:
+        return explorer.add_variable(pid, goal, req.name.strip(), req.expression, req.hold_constant, ex)
+    except explorer.ExplorerError as e:
+        _bad(e)
+
+
+@app.delete("/api/projects/{pid}/variables/{name}")
+def delete_variable(pid: str, name: str):
+    try:
+        explorer.remove(pid, "variable", name)
+    except explorer.ExplorerError as e:
+        _bad(e)
+    return {"ok": True}
+
+
+@app.get("/api/projects/{pid}/metrics")
+def list_metrics(pid: str, run_id: str | None = None):
+    goal, ex = _ctx(pid, run_id)
+    if ex:
+        return ex.metric_meta()
+    from .metrics import scalar_catalog
+    return [{**m, "kind": "standard"} for m in scalar_catalog(goal)] + explorer.load_registry(pid)["metrics"]
+
+
+@app.post("/api/projects/{pid}/metrics")
+def create_metric(pid: str, req: MetricReq):
+    goal, ex = _ctx(pid, req.run_id)
+    try:
+        return explorer.add_metric(pid, goal, req.name.strip(), req.expression, req.unit, ex)
+    except explorer.ExplorerError as e:
+        _bad(e)
+
+
+@app.delete("/api/projects/{pid}/metrics/{name}")
+def delete_metric(pid: str, name: str):
+    try:
+        explorer.remove(pid, "metric", name)
+    except explorer.ExplorerError as e:
+        _bad(e)
+    return {"ok": True}
+
+
+@app.post("/api/projects/{pid}/preview")
+def preview(pid: str, req: PreviewReq):
+    """Live validation for the builders: current value, unit, errors and (for variables) what it drives."""
+    goal, ex = _ctx(pid, req.run_id)
+    reg = explorer.load_registry(pid)
+    if req.kind == "variable":
+        return explorer.analyze_variable(reg, goal, req.name.strip(), req.expression, req.hold_constant, ex)
+    return explorer.analyze_metric(reg, goal, req.name.strip(), req.expression, req.unit, ex)
+
+
+@app.put("/api/projects/{pid}/explorer-settings")
+def explorer_settings(pid: str, req: ExplorerSettingsReq):
+    from .family import BASE_NAMES
+    reg = explorer.load_registry(pid)
+    if req.watched is not None:
+        reg["watched"] = [v for v in BASE_NAMES if v in req.watched]
+    if req.budget is not None:
+        reg["budget"] = max(2, min(200, int(req.budget)))
+    explorer.save_registry(pid, reg)
+    return {"watched": reg["watched"], "budget": reg["budget"]}
+
+
+@app.post("/api/runs/{rid}/jacobian")
+async def start_jacobian(rid: str, req: JacobianReq):
+    ex = _explorer(rid)
+    try:
+        return ex.start_jacobian(req.variables)
+    except explorer.ExplorerError as e:
+        _bad(e)
+
+
+@app.get("/api/runs/{rid}/jacobian")
+def get_jacobian(rid: str):
+    return _explorer(rid).matrix()
+
+
+@app.post("/api/runs/{rid}/surface")
+async def start_surface(rid: str, req: SurfaceReq):
+    try:
+        return _explorer(rid).start_surface(req.variable, req.metric, req.range_pct, req.n_points)
+    except (explorer.ExplorerError, ValueError) as e:
+        _bad(e)
+
+
+@app.get("/api/runs/{rid}/surface/{sid}")
+def get_surface(rid: str, sid: str, f0: float | None = None):
+    try:
+        return _explorer(rid).surface_view(sid, f0)
+    except explorer.ExplorerError as e:
+        _bad(e)
+
+
+@app.post("/api/runs/{rid}/target")
+async def target(rid: str, req: TargetReq):
+    ex = _explorer(rid)
+    try:
+        res = ex.target(req.metric, req.value, req.variable)
+    except explorer.ExplorerError as e:
+        _bad(e)
+    await ex.run.emit("target_solution", {k: res[k] for k in ("metric", "value", "variable", "solution", "side_effects",
+                                                               "in_range")})
+    return res
+
+
+@app.post("/api/runs/{rid}/verify-point")
+async def verify_point(rid: str, req: PointReq):
+    try:
+        return await _explorer(rid).verify_point(req.variable, req.value, req.metric)
+    except explorer.ExplorerError as e:
+        _bad(e)
+
+
+@app.post("/api/runs/{rid}/apply")
+def apply_point(rid: str, req: PointReq):
+    try:
+        return _explorer(rid).apply(req.variable, req.value)
+    except explorer.ExplorerError as e:
+        _bad(e)
 
 
 @app.get("/api/runs/{rid}/export/{fmt}")

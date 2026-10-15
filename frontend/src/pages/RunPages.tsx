@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { approve, exportUrl, hold, startRun } from '../api'
 import { useStore } from '../store'
 import { LineChart, S11Chart } from '../components/charts/LineChart'
 import { PolarChart, SmithChart } from '../components/charts/SmithChart'
 import { Check, Download, Play, X } from '../components/Icons'
 import { EventLog, MockBadge } from '../components/Shell'
+import { useExplorer, type ResultsTab } from '../explorer/store'
+
+const ExplorerTab = lazy(() => import('../explorer/ExplorerTab'))
+const MatrixTab = lazy(() => import('../explorer/MatrixTab'))
 
 const SOLVER = { palace: 'Palace (FEM)', openems: 'openEMS (FDTD)' } as Record<string, string>
 const fmtK = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`)
@@ -209,13 +213,13 @@ export function SolvePage() {
             <LineChart height={280} xDomain={[0, Math.max(conv.length - 1, 10)]} yDomain={[1e-10, 2]} yLog
               yTicks={[1, 1e-3, 1e-6, 1e-9]} yFmt={(v) => (v === 1 ? '1e0' : v.toExponential(0).replace('+', ''))} xFmt={(v) => `${Math.round(v)}`}
               xTicks={[]} xLabel="Iteration (current frequency sample)"
-              hlines={[{ y: 1e-8, color: '#2c5d9e', label: 'target 1e-8' }]}
-              series={[{ x: conv.map((_, i) => i), y: conv.map((c) => c.value), color: '#14213d', width: 1.8 }]} />
+              hlines={[{ y: 1e-8, color: 'var(--c-blue)', label: 'target 1e-8' }]}
+              series={[{ x: conv.map((_, i) => i), y: conv.map((c) => c.value), color: 'var(--c-ink)', width: 1.8 }]} />
           ) : (
             <LineChart height={280} xDomain={[0, Math.max(conv.length - 1, 10)]} yDomain={[-90, 0]} yTicks={[0, -30, -60, -90]}
               xTicks={[]} xLabel="Time step" yFmt={(v) => `${v} dB`}
-              hlines={[{ y: -80, color: '#2c5d9e', label: 'end criterion −80 dB' }]}
-              series={[{ x: conv.map((_, i) => i), y: conv.map((c) => c.value), color: '#14213d', width: 1.8 }]} />
+              hlines={[{ y: -80, color: 'var(--c-blue)', label: 'end criterion −80 dB' }]}
+              series={[{ x: conv.map((_, i) => i), y: conv.map((c) => c.value), color: 'var(--c-ink)', width: 1.8 }]} />
           )}
         </section>
       </div>
@@ -324,14 +328,67 @@ export function VerifyPage() {
 }
 
 /* ============================== RESULTS ============================== */
+const RESULT_TABS: [ResultsTab, string][] = [['summary', 'Summary'], ['explorer', '3D explorer'], ['matrix', 'Effect matrix'], ['exports', 'Exports']]
+
 export function ResultsPage() {
-  const { run, project } = useStore()
-  const r = run.results
-  const [tab, setTab] = useState('s11')
-  if (!r) {
+  const { run } = useStore()
+  const tab = useExplorer((s) => s.tab)
+  const setTab = useExplorer((s) => s.setTab)
+  const progress = useExplorer((s) => s.matrix?.status === 'running' ? s.matrix.progress : null)
+  if (!run.results) {
     if (!run.id) return <NoRun />
     return <section className="panel"><Waiting what={run.status === 'cancelled' ? 'Run cancelled.' : run.status === 'failed' ? 'Run failed. See the event log.' : 'Results appear when the run finishes…'} /></section>
   }
+  return (
+    <>
+      <nav className="tabs page-tabs" aria-label="Results">
+        {RESULT_TABS.map(([k, l]) => (
+          <button key={k} className={tab === k ? 'on' : ''} aria-current={tab === k ? 'page' : undefined} onClick={() => setTab(k)}>
+            {l}{k === 'matrix' && progress && <span className="tab-badge">{progress.done}/{progress.total}</span>}
+          </button>
+        ))}
+      </nav>
+      {tab === 'summary' && <ResultsSummary />}
+      <Suspense fallback={<section className="panel"><Waiting what="Loading…" /></section>}>
+        {tab === 'explorer' && <ExplorerTab />}
+        {tab === 'matrix' && <MatrixTab />}
+      </Suspense>
+      {tab === 'exports' && <ExportsTab />}
+    </>
+  )
+}
+
+function ExportsTab() {
+  const items = [
+    ['report', 'Report (HTML)', 'Run summary, verification checks, S11 with the error bar, method and compute. Opens in a new tab.'],
+    ['s1p', 'Touchstone .s1p', 'Verified S11 for circuit simulators.'],
+    ['script', 'Python script', 'Reproduces this run headless with the same settings.'],
+    ['yaml', 'Problem YAML', 'The canonical problem description (geometry, materials, ports, settings, goals).'],
+  ]
+  return (
+    <section className="panel">
+      <div className="panel-head"><h2>Exports</h2><MockBadge /></div>
+      <div className="export-list">
+        {items.map(([fmt, label, desc]) => (
+          <div key={fmt} className="export-item">
+            <div><b>{label}</b><div className="small muted">{desc}</div></div>
+            <a className="btn" href={exportUrl(fmt)} target={fmt === 'report' ? '_blank' : undefined} rel="noreferrer"><Download size={15} /> {label.split(' (')[0]}</a>
+          </div>
+        ))}
+        <div className="export-item">
+          <div><b>Effect matrix (CSV)</b><div className="small muted">Every variable × metric effect per +5%, with noisy and n/a flags. Export it from the Effect matrix tab.</div></div>
+          <button className="btn" onClick={() => useExplorer.getState().setTab('matrix')}>Open effect matrix</button>
+        </div>
+      </div>
+      <p className="small muted" style={{ marginBottom: 0 }}>All results come from the mock solver; every export carries the MOCK label.</p>
+    </section>
+  )
+}
+
+function ResultsSummary() {
+  const { run, project } = useStore()
+  const r = run.results
+  const [tab, setTab] = useState('s11')
   const ok = r.status === 'met_verified'
   const title = { met_verified: 'Goal met and verified', verified_not_met: 'Verified, goal not met', not_verified: 'Not verified' }[r.status as string] ?? r.status
   const g = r.goal
@@ -368,22 +425,22 @@ export function ResultsPage() {
           {tab === 'impedance' && (
             <>
               <LineChart height={330} xDomain={fr} yDomain={[Math.min(-60, ...r.z_im) - 5, Math.max(80, ...r.z_re) + 5]} xLabel="Frequency (GHz)" yLabel="Ω" legend
-                hlines={[{ y: 50, color: '#9aa6b8', dash: '3 4', label: '50 Ω' }]}
-                series={[{ x: r.freqs, y: r.z_re, color: '#c2541e', label: 'Re Z' }, { x: r.freqs, y: r.z_im, color: '#2c5d9e', label: 'Im Z', dash: '7 4' }]} />
+                hlines={[{ y: 50, color: 'var(--c-grey)', dash: '3 4', label: '50 Ω' }]}
+                series={[{ x: r.freqs, y: r.z_re, color: 'var(--c-orange)', label: 'Re Z' }, { x: r.freqs, y: r.z_im, color: 'var(--c-blue)', label: 'Im Z', dash: '7 4' }]} />
               <div className="chart-cap">Z at resonance: {r.z_res[0]} {r.z_res[1] >= 0 ? '+' : '−'} j{Math.abs(r.z_res[1])} Ω</div>
             </>
           )}
           {tab === 'vswr' && (
             <>
               <LineChart height={330} xDomain={fr} yDomain={[1, 6]} yTicks={[1, 2, 3, 4, 5, 6]} xLabel="Frequency (GHz)" yLabel="VSWR"
-                vbands={[{ x1: g.f1, x2: g.f2, color: '#2c5d9e', opacity: 0.1 }]} hlines={[{ y: 2, color: '#c2541e', label: 'VSWR 2' }]}
-                series={[{ x: r.freqs, y: r.vswr.map((v: number) => Math.min(v, 6)), color: '#c2541e' }]} />
+                vbands={[{ x1: g.f1, x2: g.f2, color: 'var(--c-blue)', opacity: 0.1 }]} hlines={[{ y: 2, color: 'var(--c-orange)', label: 'VSWR 2' }]}
+                series={[{ x: r.freqs, y: r.vswr.map((v: number) => Math.min(v, 6)), color: 'var(--c-orange)' }]} />
               <div className="chart-cap">Minimum VSWR {Math.min(...r.vswr).toFixed(2)}</div>
             </>
           )}
           {tab === 'farfield' && (
             <>
-              <PolarChart height={330} theta={r.pattern.theta_deg} series={[{ y: r.pattern.e_plane_db, color: '#c2541e', label: 'E-plane (φ = 0°)' }, { y: r.pattern.h_plane_db, color: '#2c5d9e', label: 'H-plane (φ = 90°)', dash: '7 4' }]} />
+              <PolarChart height={330} theta={r.pattern.theta_deg} series={[{ y: r.pattern.e_plane_db, color: 'var(--c-orange)', label: 'E-plane (φ = 0°)' }, { y: r.pattern.h_plane_db, color: 'var(--c-blue)', label: 'H-plane (φ = 90°)', dash: '7 4' }]} />
               <div className="chart-cap">Analytic cavity-model estimate at {r.pattern.f_ghz.toFixed(3)} GHz · peak gain ≈ {r.pattern.peak_gain_dbi} dBi. A far-field post-processor from solver fields is coming soon.</div>
             </>
           )}

@@ -1,5 +1,6 @@
 import { useStore } from './store'
 import type { RunEvent } from './types'
+import { useExplorer } from './explorer/store'
 
 async function post(url: string, body?: unknown) {
   const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) })
@@ -26,20 +27,28 @@ export async function startRun(opts: { sample?: boolean } = {}) {
   const { run_id } = await post('/api/runs', { project, speed: opts.sample ? 60 : st.speed, scripted: !!opts.sample })
   const view = st.view
   st.resetRun(run_id)
+  useExplorer.getState().reset(run_id)
   if (opts.sample) useStore.setState({ view, followRun: false })
   else st.setView('analyze')
   source = new EventSource(`/api/runs/${run_id}/events`)
+  // The stream stays open after run_finished: the effect matrix keeps computing in the background.
   source.onmessage = (m) => {
     const ev: RunEvent = JSON.parse(m.data)
     useStore.getState().applyEvent(ev)
-    if (ev.type === 'run_finished') source?.close()
+    useExplorer.getState().onEvent(ev)
   }
 }
 
 export async function sendChat(text: string) {
   const st = useStore.getState()
-  if (st.run.id && !st.run.finished) {
-    return post(`/api/runs/${st.run.id}/chat`, { text })
+  if (st.run.id) {
+    // finished runs still take chat: explorer questions ("what does feed_x do?") are answered from the run
+    const r = await post(`/api/runs/${st.run.id}/chat`, { text })
+    if (r.ui) {
+      useExplorer.getState().applyUi(r.ui)
+      if (r.ui.tab) useStore.getState().setView('results', true)
+    }
+    return r
   }
   st.pushChat({ role: 'user', text })
   const r = await post('/api/chat', { text, project: summarizeProject() })

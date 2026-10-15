@@ -41,6 +41,13 @@ def is_pec(project: dict, obj: dict) -> bool:
     return material(project, obj.get("material", "")).get("kind") == "pec"
 
 
+def ground_margin(ground: dict, patch: dict) -> float:
+    """Smallest distance from a patch edge to the ground-plane edge (mm)."""
+    mx = ground["size"][0] / 2 - patch["size"][0] / 2 - abs(patch["pos"][0] - ground["pos"][0])
+    my = ground["size"][1] / 2 - patch["size"][1] / 2 - abs(patch["pos"][1] - ground["pos"][1])
+    return min(mx, my)
+
+
 def interpret(project: dict) -> dict:
     """Find substrate / ground / patch / port in an arbitrary object list."""
     objs = [o for o in project.get("objects", []) if o.get("visible", True) is not False]
@@ -82,7 +89,8 @@ def interpret(project: dict) -> dict:
         feed = 0.33
         if port:
             feed = min(abs(port["pos"][0] - patch["pos"][0]) / max(L / 2, 1e-6), 1.0)
-        model = PatchModel(L, W, eps_r, max(h, 0.05), tan_d, feed)
+        margin = ground_margin(ground, patch) if ground and ground is not patch else 15.0
+        model = PatchModel(L, W, eps_r, max(h, 0.05), tan_d, feed, max(margin, 0.0))
 
     xs = [o["pos"][0] + s * o["size"][0] / 2 for o in objs if o["kind"] != "port" for s in (-1, 1)]
     ys = [o["pos"][1] + s * o["size"][1] / 2 for o in objs if o["kind"] != "port" for s in (-1, 1)]

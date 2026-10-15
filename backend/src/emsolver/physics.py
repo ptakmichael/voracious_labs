@@ -6,6 +6,7 @@ moves the curve in a believable way.
 """
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass
 
@@ -48,10 +49,15 @@ def length_for_f(f_ghz: float, width_mm: float, eps_r: float, h_mm: float) -> fl
 # ---------------------------------------------------------------- mock S11 model
 # The "true" mock resonance sits a little below the design equation (probe inductance,
 # finite ground), which is what makes the first design miss the goal band.
-PROBE_SHIFT = 0.986
+PROBE_SHIFT = 0.9866
 # Per-solver bias so FDTD and FEM disagree slightly; openEMS bias depends on padding.
 SOLVER_BIAS = {"palace": 1.000, "openems": 1.000}
 FIDELITY_ERR = {0: 0.012, 1: 0.003, 2: 0.0008}
+R_EDGE = 176.0          # input resistance with the feed at the radiating edge (Ω)
+Z0 = 50.0
+# Repeatability of the mock "solver" (relative f_res, Ω, relative Q). Small enough for FD and
+# response-surface fits to behave, large enough that near-zero sensitivities read as noise.
+NOISE = {"fr": 1e-5, "r": 0.05, "q": 2e-4}
 
 
 @dataclass
@@ -62,9 +68,12 @@ class PatchModel:
     h_mm: float
     tan_d: float = 0.0027
     feed_frac: float = 0.33   # feed offset / (L/2)
+    margin_mm: float = 15.0   # ground-plane margin beyond the patch edge
 
     def f_true(self) -> float:
-        return f_res_equation(self.length_mm, self.width_mm, self.eps_r, self.h_mm) * PROBE_SHIFT
+        # a small ground plane pulls the resonance down a little
+        shift = PROBE_SHIFT - 0.004 * math.exp(-self.margin_mm / 8)
+        return f_res_equation(self.length_mm, self.width_mm, self.eps_r, self.h_mm) * shift
 
     def q(self) -> float:
         lam0 = C0 / (self.f_true() * 1e9) * 1e3
@@ -72,29 +81,65 @@ class PatchModel:
         q *= 1 / (1 + 40 * self.tan_d)  # loss lowers Q a bit
         return min(max(q, 5.0), 45.0)
 
-    def depth(self) -> float:
-        d = 0.965 - 1.6 * (self.feed_frac - 0.33) ** 2
-        return min(max(d, 0.25), 0.975)
+    def r_in(self) -> float:
+        """Input resistance at resonance vs. feed position: R_edge · sin²(π · feed_ratio / 2)."""
+        r = min(max(self.feed_frac, 0.0), 1.0)
+        return max(R_EDGE * math.sin(math.pi * r / 2) ** 2, 0.5)
+
+    def x_probe(self, f_ghz: float) -> float:
+        """Series reactance of the probe feed (Ω): longer probes (thicker substrates) are more inductive."""
+        l_nh = 0.42 * self.h_mm * (1 + 0.5 * self.feed_frac)
+        return 2 * math.pi * f_ghz * l_nh
+
+    def params(self) -> tuple:
+        return (round(self.length_mm, 6), round(self.width_mm, 6), round(self.eps_r, 6), round(self.h_mm, 6),
+                round(self.tan_d, 6), round(self.feed_frac, 6), round(self.margin_mm, 6))
+
+
+def _noise(key: tuple, salt: str) -> float:
+    """Deterministic pseudo-noise in [-1, 1]: the same design and settings always give the same answer."""
+    h = hashlib.blake2b(repr((key, salt)).encode(), digest_size=8).digest()
+    return int.from_bytes(h, "big") / 2 ** 63 - 1.0
 
 
 def s11_complex(model: PatchModel, freqs_ghz: list[float], solver: str = "palace",
                 fidelity: int = 1, padding_ratio: float = 0.25) -> list[complex]:
-    """MOCK S11 for a patch: S11 = 1 - d / (1 + jQ(f/fr - fr/f)) with small perturbations."""
+    """MOCK S11 for a probe-fed patch: a resonator Zin = R(1 + jQx) + jX_probe, x = f/fr − fr/f.
+
+    R follows the feed position (R_edge sin²(π r / 2)), so moving the feed sets the match; the
+    resonance follows the design equations. Q is the unloaded Q, chosen so the loaded Q at a 50 Ω
+    match equals the cavity-model estimate.
+    """
+    key = (model.params(), solver, fidelity, round(padding_ratio, 4))
     fr = model.f_true()
     # fidelity-dependent shift: coarse meshes resonate low
     fr *= 1 - FIDELITY_ERR.get(fidelity, 0.003)
     if solver == "openems":
         # truncated air box pulls FDTD resonance down; fixed by more padding
         fr *= 1 - (0.023 if padding_ratio < 0.5 else 0.005)
-    q = model.q() * (1 - 0.04 * (2 - min(fidelity, 2)))
-    d = model.depth() - (0.015 if solver == "openems" else 0.0)
+    fr *= 1 + NOISE["fr"] * _noise(key, "fr")
+    q_loaded = model.q() * (1 - 0.04 * (2 - min(fidelity, 2)))
+    q0 = 2 * q_loaded * (1 + NOISE["q"] * _noise(key, "q"))
+    r = model.r_in() * (1.03 if solver == "openems" else 1.0) + NOISE["r"] * _noise(key, "r")
     out = []
     for f in freqs_ghz:
-        x = q * (f / fr - fr / f)
-        s = 1 - d / complex(1, x)
-        # tiny phase delay from the feed line
-        out.append(s * complex(math.cos(-0.35 * f / fr), math.sin(-0.35 * f / fr)))
+        x = q0 * (f / fr - fr / f)
+        z = complex(r, r * x + model.x_probe(f))
+        out.append((z - Z0) / (z + Z0))
     return out
+
+
+def zin(s: complex, z0: float = Z0) -> complex:
+    return z0 * (1 + s) / (1 - s) if abs(1 - s) > 1e-12 else complex(1e9, 0)
+
+
+def gain_boresight(model: PatchModel, f_ghz: float) -> float:
+    """Analytic cavity-model boresight gain (dBi): ~6–7 dBi, a little higher for wide, thick, low-εr patches."""
+    lam0 = C0 / (f_ghz * 1e9) * 1e3
+    g = 6.0 + 2.2 / math.sqrt(model.eps_r) - 10 * math.log10(1 + 25 * model.tan_d)
+    g += 1.5 * (model.width_mm / lam0 - 0.33) + 4.0 * (model.h_mm / lam0 - 0.012)
+    g -= 0.6 * math.exp(-model.margin_mm / 10)  # small grounds leak power backwards
+    return g
 
 
 def db(s: complex) -> float:
@@ -155,6 +200,6 @@ def patch_pattern(model: PatchModel, f_ghz: float, n: int = 181) -> dict:
         h_plane.append(hp)
     norm = lambda arr: [max(20 * math.log10(max(v, 1e-6) / max(arr)), -40) for v in arr]
     # crude directivity: ~ 6.6 dBi for typical patches, rises a bit with low eps_r
-    gain = 6.0 + 2.2 / math.sqrt(model.eps_r) - 10 * math.log10(1 + 25 * model.tan_d)
+    gain = gain_boresight(model, f_ghz)
     return {"theta_deg": thetas, "e_plane_db": norm(e_plane), "h_plane_db": norm(h_plane),
             "peak_gain_dbi": round(gain, 2), "f_ghz": f_ghz}

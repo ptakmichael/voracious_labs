@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { patchTemplate, startRun } from '../api'
 import { BUILTIN_MATERIALS, defaultProject, useStore } from '../store'
 import type { GeoObject, Material, ObjKind, Project } from '../types'
@@ -55,6 +55,7 @@ function GeometryPanel({ onWizard, onMaterials }: { onWizard: () => void; onMate
   const mats = allMaterials(project)
   const fileRef = useRef<HTMLInputElement>(null)
   const [stepNote, setStepNote] = useState(false)
+  const [confirmReset, setConfirmReset] = useState(false)
   const add = (k: ObjKind) => {
     const o = newObject(k, project)
     setProject((p) => ({ ...p, objects: [...p.objects, o] }))
@@ -118,13 +119,23 @@ function GeometryPanel({ onWizard, onMaterials }: { onWizard: () => void; onMate
           const blob = new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' })
           const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `${project.name}.json`; a.click()
         }}><Download size={15} /> Save</button>
-        <button className="btn sm" onClick={() => { if (confirm('Reset to the default 2.4 GHz patch?')) { setProject(() => defaultProject()); select('patch') } }}>Reset</button>
+        <button className="btn sm reset-btn" onClick={() => setConfirmReset(true)} title="Restore the default 2.4 GHz patch workspace"><Trash size={15} /> Reset</button>
       </div>
       <input ref={fileRef} type="file" accept=".json" hidden onChange={async (e) => {
         const f = e.target.files?.[0]; if (!f) return
         try { const p = JSON.parse(await f.text()); setProject(() => ({ ...defaultProject(), ...p })) } catch { alert('Not a valid project file') }
         e.target.value = ''
       }} />
+      {confirmReset && (
+        <ResetDialog
+          nObjects={project.objects.length}
+          onCancel={() => setConfirmReset(false)}
+          onConfirm={() => {
+            setProject(() => defaultProject())
+            select('patch')
+            setConfirmReset(false)
+          }} />
+      )}
       {stepNote && (
         <div className="overlay" onClick={() => setStepNote(false)}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -135,6 +146,36 @@ function GeometryPanel({ onWizard, onMaterials }: { onWizard: () => void; onMate
         </div>
       )}
     </section>
+  )
+}
+
+/** Two-step confirmation: the safe choice is focused by default, the destructive one is red. */
+function ResetDialog({ nObjects, onCancel, onConfirm }: { nObjects: number; onCancel: () => void; onConfirm: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onCancel])
+  return (
+    <div className="overlay" onClick={onCancel}>
+      <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="reset-title" style={{ width: 'min(520px, 100%)' }}
+        onClick={(e) => e.stopPropagation()}>
+        <div className="danger-head">
+          <span className="danger-ico" aria-hidden="true"><Trash size={20} /></span>
+          <h2 id="reset-title">Reset the workspace?</h2>
+        </div>
+        <p>This replaces your current model with the default 2.4 GHz patch on RO4003C:</p>
+        <ul className="small" style={{ marginTop: 0, paddingLeft: 20, lineHeight: 1.7 }}>
+          <li>Geometry: your {nObjects} object{nObjects === 1 ? '' : 's'} are removed and the default patch is restored</li>
+          <li>Custom materials, boundary, solve settings, design goal and constraints go back to defaults</li>
+        </ul>
+        <p className="small muted">You can still bring it back afterwards with Undo (Ctrl+Z). To keep a copy, use Save first.</p>
+        <div className="modal-foot">
+          <button className="btn" autoFocus onClick={onCancel}>Cancel</button>
+          <button className="btn danger" onClick={onConfirm}><Trash size={15} /> Reset workspace</button>
+        </div>
+      </div>
+    </div>
   )
 }
 

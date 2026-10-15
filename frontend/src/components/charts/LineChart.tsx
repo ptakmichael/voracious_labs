@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 export interface Series { x: number[]; y: number[]; color: string; width?: number; dash?: string; label?: string; dot?: boolean }
+export interface Marker { x: number; y: number; color: string; r?: number; hollow?: boolean; title?: string }
 export interface Band { x: number[]; lo: number[]; hi: number[]; color: string; opacity?: number }
 
 interface Props {
@@ -8,6 +9,7 @@ interface Props {
   bands?: Band[]
   vbands?: { x1: number; x2: number; color: string; opacity?: number }[]
   hlines?: { y: number; color: string; dash?: string; label?: string }[]
+  points?: Marker[]
   xDomain: [number, number]
   yDomain: [number, number]
   yLog?: boolean
@@ -56,15 +58,15 @@ export function LineChart(p: Props) {
         </defs>
         {yt.map((v) => (
           <g key={`y${v}`}>
-            <line x1={m.l} x2={W - m.r} y1={Y(v)} y2={Y(v)} stroke="#dde2ea" />
-            <text x={m.l - 10} y={Y(v) + 4} fontSize={12.5} textAnchor="end" fill="#4a5568">{yf(v)}</text>
+            <line x1={m.l} x2={W - m.r} y1={Y(v)} y2={Y(v)} stroke="var(--c-grid)" />
+            <text x={m.l - 10} y={Y(v) + 4} fontSize={12.5} textAnchor="end" fill="var(--c-axis)">{yf(v)}</text>
           </g>
         ))}
         {xt.map((v) => (
-          <text key={`x${v}`} x={X(v)} y={H - m.b + 18} fontSize={12.5} textAnchor="middle" fill="#4a5568">{xf(v)}</text>
+          <text key={`x${v}`} x={X(v)} y={H - m.b + 18} fontSize={12.5} textAnchor="middle" fill="var(--c-axis)">{xf(v)}</text>
         ))}
-        {p.xLabel && <text x={(m.l + W - m.r) / 2} y={H - 6} fontSize={12.5} textAnchor="middle" fill="#4a5568">{p.xLabel}</text>}
-        {p.yLabel && <text transform={`translate(14 ${(m.t + H - m.b) / 2}) rotate(-90)`} fontSize={12.5} textAnchor="middle" fill="#4a5568">{p.yLabel}</text>}
+        {p.xLabel && <text x={(m.l + W - m.r) / 2} y={H - 6} fontSize={12.5} textAnchor="middle" fill="var(--c-axis)">{p.xLabel}</text>}
+        {p.yLabel && <text transform={`translate(14 ${(m.t + H - m.b) / 2}) rotate(-90)`} fontSize={12.5} textAnchor="middle" fill="var(--c-axis)">{p.yLabel}</text>}
         <g clipPath={`url(#clip-${W}-${H})`}>
           {p.vbands?.map((b, i) => (
             <rect key={i} x={X(b.x1)} y={m.t} width={Math.max(0, X(b.x2) - X(b.x1))} height={H - m.t - m.b} fill={b.color} opacity={b.opacity ?? 0.1} />
@@ -83,6 +85,10 @@ export function LineChart(p: Props) {
               <polyline points={pts(s.x, s.y)} fill="none" stroke={s.color} strokeWidth={s.width ?? 2.2} strokeDasharray={s.dash} strokeLinejoin="round" />
               {s.dot && <circle cx={X(s.x[s.x.length - 1])} cy={clampY(s.y[s.y.length - 1])} r={5} fill={s.color} />}
             </g>
+          ))}
+          {p.points?.map((pt, i) => (
+            <circle key={`pt${i}`} cx={X(pt.x)} cy={clampY(pt.y)} r={pt.r ?? 5.5} fill={pt.hollow ? 'var(--c-paper)' : pt.color}
+              stroke={pt.color} strokeWidth={pt.hollow ? 2.4 : 0}>{pt.title && <title>{pt.title}</title>}</circle>
           ))}
         </g>
       </svg>
@@ -114,10 +120,10 @@ export function S11Chart({ f, s, goal, fRange, live, band, extra, height }: {
       yDomain={[minY, 0.5]}
       yTicks={ticks}
       xLabel="Frequency (GHz)"
-      vbands={[{ x1: goal.f1, x2: goal.f2, color: '#2c5d9e', opacity: 0.1 }]}
-      hlines={[{ y: goal.threshold_db, color: '#c2541e' }]}
-      bands={band ? [{ x: f, lo: band.lo, hi: band.hi, color: '#c2541e', opacity: 0.2 }] : []}
-      series={[...(extra ?? []), { x: f, y: s, color: '#c2541e', width: 2.4, dot: live, label: 'S11' }]}
+      vbands={[{ x1: goal.f1, x2: goal.f2, color: 'var(--c-blue)', opacity: 0.1 }]}
+      hlines={[{ y: goal.threshold_db, color: 'var(--c-orange)' }]}
+      bands={band ? [{ x: f, lo: band.lo, hi: band.hi, color: 'var(--c-orange)', opacity: 0.2 }] : []}
+      series={[...(extra ?? []), { x: f, y: s, color: 'var(--c-orange)', width: 2.4, dot: live, label: 'S11' }]}
       legend={!!extra?.length}
     />
   )

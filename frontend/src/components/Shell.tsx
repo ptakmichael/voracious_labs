@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { approve, cancelRun, sendChat } from '../api'
 import { useStore } from '../store'
+import { useTheme, type ThemeMode } from '../theme'
 import { STAGES, type Stage } from '../types'
 import { Check, Logo, Send, Stop } from './Icons'
 
@@ -8,6 +9,7 @@ const AUTONOMY_LABEL = { ask: 'Ask me first', balanced: 'Balanced', auto: 'Fully
 
 export function TopBar() {
   const { project, run, view, setView, caps, setProject } = useStore()
+  const { mode, setMode } = useTheme()
   const label = (s: Stage) => (s === 'setup' ? 'Model' : s[0].toUpperCase() + s.slice(1))
   const running = run.id && !run.finished
   return (
@@ -40,6 +42,11 @@ export function TopBar() {
       </span>
       <span className="chip warn" title="openEMS and Palace are not installed; every result is from the mock solver">Mock solvers</span>
       <span className="chip">Autonomy: {AUTONOMY_LABEL[project.settings.autonomy]}</span>
+      <select className="chip theme-select" value={mode} onChange={(e) => setMode(e.target.value as ThemeMode)} aria-label="Colour theme" title="Colour theme (Auto follows your system setting)">
+        <option value="system">◐ Auto</option>
+        <option value="light">☀ Light</option>
+        <option value="dark">☾ Dark</option>
+      </select>
       </div>
     </header>
   )

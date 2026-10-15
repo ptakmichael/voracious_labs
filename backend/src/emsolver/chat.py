@@ -5,6 +5,7 @@ import json
 import os
 import re
 
+from . import explorer as ex_mod
 from .orchestrator import COMPAT, MODEL, PROVIDER_LABEL, compat_client, have_api_key, provider
 from .pipeline import Run
 from .problem import SOLVER_LABEL
@@ -80,6 +81,149 @@ async def ask_compat(p: str, state: dict, text: str, history: list[dict]) -> str
         return f"({name} call failed: {type(e).__name__}. Details are in the backend log.)"
 
 
+# ---------------------------------------------------------------- explorer intents (EXPLORER_README §5.3)
+VAR_ALIASES = {
+    "feed": "feed_x", "feed position": "feed_x", "feed offset": "feed_x", "feed x": "feed_x", "probe": "feed_x",
+    "length": "L_res", "resonant length": "L_res", "patch length": "L_res", "l": "L_res",
+    "width": "W", "patch width": "W", "height": "h", "substrate height": "h", "thickness": "h",
+    "substrate thickness": "h", "permittivity": "eps_r", "epsilon": "eps_r", "er": "eps_r", "εr": "eps_r",
+    "substrate εr": "eps_r", "ground margin": "margin", "ground": "margin",
+}
+METRIC_ALIASES = {
+    "resonance": "f_res", "resonant frequency": "f_res", "frequency": "f_res", "fres": "f_res",
+    "bandwidth": "bw_10db", "bw": "bw_10db", "-10 db bandwidth": "bw_10db",
+    "re zin": "Zin_re_fc", "rezin": "Zin_re_fc", "zin": "Zin_re_fc", "input resistance": "Zin_re_fc",
+    "resistance": "Zin_re_fc", "real zin": "Zin_re_fc", "re z": "Zin_re_fc",
+    "im zin": "Zin_im_fc", "reactance": "Zin_im_fc", "input reactance": "Zin_im_fc", "im z": "Zin_im_fc",
+    "s11": "S11_dB_fc", "|s11|": "S11_dB_fc", "match": "S11_dB_fc", "matching": "S11_dB_fc",
+    "vswr": "VSWR_min", "gain": "gain_bs", "boresight gain": "gain_bs", "gain boresight": "gain_bs",
+    "axial ratio": "axial_ratio", "ar": "axial_ratio", "goal margin": "goal_margin", "margin to goal": "goal_margin",
+}
+OVERLAYS = {"|e|": "E", "e": "E", "e field": "E", "|e| field": "E", "field": "E", "e-field": "E",
+            "current": "J", "surface current": "J", "j": "J", "currents": "J",
+            "sensitivity": "sens", "sensitivity paint": "sens", "none": "none", "off": "none", "nothing": "none"}
+
+
+def _clean(phrase: str) -> str:
+    p = phrase.strip().strip("?.!\"'").strip()
+    p = re.sub(r"^(the|a|an)\s+", "", p, flags=re.I)
+    return re.sub(r"\s+(here|now|actually|exactly)$", "", p, flags=re.I).strip()
+
+
+def _resolve(phrase: str, names: list[str], aliases: dict[str, str]) -> str | None:
+    p = _clean(phrase)
+    for n in names:
+        if n.lower() == p.lower():
+            return n
+    hit = aliases.get(p.lower())
+    return hit if hit in names else None
+
+
+async def explorer_intent(run: Run, text: str) -> dict | None:
+    """Deterministic answers from the Jacobian and response surfaces. None if the text isn't an explorer intent."""
+    t = text.strip()
+    pats = {
+        "what_does": r"^what\s+does\s+(.+?)\s+(?:actually\s+)?do\b",
+        "what_controls": r"^what\s+controls\s+(.+?)\??$",
+        "define": r"^define\s+([A-Za-z_]\w*)\s*=\s*(.+?)(?:\s+holding\s+(.+?))?\s*$",
+        "add_metric": r"^add\s+metric\s+([A-Za-z_]\w*)\s*=\s*(.+?)(?:\s+unit\s+(\S+))?\s*$",
+        "color": r"^colou?r\s+handles\s+by\s+(.+?)\s*$",
+        "overlay": r"^(?:show\s+)?overlay\s+(.+?)\s*$",
+        "matrix": r"^(?:show|open)\s+(?:the\s+)?(?:effect\s+)?matrix\s*$",
+        "show_vs": r"^show\s+(.+?)\s+vs\.?\s+(.+?)\s*$",
+        "reach": r"^reach\s+(.+?)\s*=\s*(-?[\d.]+)\s*([^\s\d]*)\s+using\s+(.+?)\s*$",
+    }
+    kind, m = None, None
+    for k, pat in pats.items():
+        m = re.match(pat, t, flags=re.I)
+        if m:
+            kind = k
+            break
+    if not kind:
+        return None
+    if not run.finished or not run.primary:
+        return {"reply": "The 3D explorer and effect matrix open once the run has results. I'll pick this up then.",
+                "ui": None}
+    try:
+        ex = ex_mod.for_run(run)
+    except ex_mod.ExplorerError as e:
+        return {"reply": str(e), "ui": None}
+    var_names = [v["name"] for v in ex.variables_view()]
+    met_names = ex.metric_names()
+    var = lambda s: _resolve(s, var_names, VAR_ALIASES)
+    met = lambda s: _resolve(s, met_names, METRIC_ALIASES)
+    label = {mm["name"]: mm["label"] for mm in ex.metric_meta()}
+
+    if kind == "what_does":
+        v = var(m.group(1))
+        if not v:
+            return None  # not a variable: let the general answerer take it
+        return {"reply": ex.what_does(v), "ui": {"tab": "explorer", "select": v}}
+    if kind == "what_controls":
+        mt = met(m.group(1))
+        if not mt:
+            return None
+        return {"reply": ex.what_controls(mt), "ui": {"tab": "matrix", "sort": mt}}
+    if kind == "define":
+        name, expression, holding = m.group(1), m.group(2), m.group(3)
+        hold = [h for h in re.split(r"[,\s]+|\band\b", holding or "") if h.strip()]
+        hold = [var(h) or h for h in hold]
+        try:
+            a = ex_mod.add_variable(ex.name, ex.goal, name, expression, hold, ex)
+        except ex_mod.ExplorerError as e:
+            return {"reply": f"I couldn't define {name}: {e}", "ui": None}
+        drives = ", ".join(f"{d['var']} (∂{d['var']}/∂{name} = {d['dp_dq']:.3g} {d['unit']})".replace(" )", ")")
+                           for d in a["drives"])
+        held = f"holding {', '.join(hold)}" if hold else "nothing held constant (minimum-norm move)"
+        return {"reply": f"Defined {name} = {expression} ({held}); it is {a['value']:.4g} now and drives {drives}. "
+                         f"Its effects come from the chain rule, with no new simulations.",
+                "ui": {"tab": "matrix", "refresh": True, "select": name}}
+    if kind == "add_metric":
+        name, expression, unit = m.group(1), m.group(2), m.group(3)
+        try:
+            a = ex_mod.add_metric(ex.name, ex.goal, name, expression, unit, ex)
+        except ex_mod.ExplorerError as e:
+            return {"reply": f"I couldn't add {name}: {e}", "ui": None}
+        return {"reply": f"Added metric {name} = {expression}; it is {a['value']:.4g} {a['unit']} on the verified result. "
+                         f"Its column fills from the existing runs.".replace(" .", "."),
+                "ui": {"tab": "matrix", "refresh": True}}
+    if kind == "color":
+        mt = met(m.group(1))
+        if not mt:
+            return {"reply": f"I don't know a metric called '{_clean(m.group(1))}'. Try one of: {', '.join(met_names)}.",
+                    "ui": None}
+        return {"reply": f"Handles are now coloured by their effect on {label[mt]}.", "ui": {"tab": "explorer", "colorBy": mt}}
+    if kind == "overlay":
+        o = OVERLAYS.get(_clean(m.group(1)).lower())
+        if not o:
+            return {"reply": "Overlays: |E| field, surface current, sensitivity paint, or none.", "ui": None}
+        if o == "sens":
+            return {"reply": "Sensitivity paint isn't available yet: the sensitivity map hasn't been computed.",
+                    "ui": {"tab": "explorer"}}
+        label = {"E": "|E| field", "J": "surface current", "none": "no overlay"}[o]
+        return {"reply": f"Showing {label} (analytic cavity-model picture, MOCK).", "ui": {"tab": "explorer", "overlay": o}}
+    if kind == "matrix":
+        return {"reply": "Here's the effect matrix." if ex.rows else ex._not_ready(), "ui": {"tab": "matrix"}}
+    if kind == "show_vs":
+        v, mt = var(m.group(1)), met(m.group(2))
+        if not v or not mt:
+            return None
+        return {"reply": f"Opened {label[mt]} vs {v}. " + (ex.target_hint(v, mt)), "ui": {"tab": "matrix", "cell": [v, mt]}}
+    if kind == "reach":
+        mt, val, v = met(m.group(1)), float(m.group(2)), var(m.group(4))
+        if not mt or not v:
+            return {"reply": "Try e.g. \"reach Re Zin = 50 Ω using feed_ratio\".", "ui": None}
+        try:
+            r = ex.target(mt, val, v)
+        except ex_mod.ExplorerError as e:
+            return {"reply": f"I can't solve that: {e}", "ui": {"tab": "matrix", "cell": [v, mt]}}
+        await run.emit("target_solution", {k: r[k] for k in ("metric", "value", "variable", "solution", "side_effects",
+                                                             "in_range")})
+        tail = " Press Verify with solver to confirm with one verified run." if r["in_range"] else ""
+        return {"reply": r["sentence"] + tail, "ui": {"tab": "matrix", "cell": [v, mt], "target": val}}
+    return None
+
+
 def _why_answer(run: Run, text: str) -> str:
     t = text.lower()
     if run.selection and any(k in t for k in ("fem", "palace", "fdtd", "openems", "method", "solver", "choose", "chose")):
@@ -108,6 +252,10 @@ async def handle(run: Run | None, text: str, project_state: dict | None = None) 
         return {"reply": reply or ("Set up your geometry and goals, then press Run. " + HELP), "action": None}
 
     await you()
+    ex_answer = await explorer_intent(run, text)
+    if ex_answer:
+        await run.say(ex_answer["reply"])
+        return {"reply": ex_answer["reply"], "action": "explorer", "ui": ex_answer.get("ui")}
     pending = run.pending["target"] if run.pending else None
 
     def hold():
