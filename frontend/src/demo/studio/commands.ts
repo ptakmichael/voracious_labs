@@ -10,9 +10,9 @@ import { useModel, validate } from '../modeler/model'
 import { radEff } from '../paperPhysics'
 import { useTheme } from '../theme'
 import { addMarker, exportCsv, seriesNow } from './Report'
-import { type Params, type Trace, type XVar, available, parseExpr, traceLabel } from './quantities'
+import { type Params, type Trace, type XVar, available, parseExpr } from './quantities'
 import { CATALOG, isTool, plotDef } from './catalog'
-import { newTraceId, traceStyle, useStudio } from './store'
+import { PAPER_INK, newTraceId, traceStyle, useStudio } from './store'
 
 const S = () => useStudio.getState()
 const out = (t: string) => S().print('out', t)
@@ -44,25 +44,78 @@ export function vars(): VarDef[] {
 let fileInput: HTMLInputElement | null = null
 export const bindFileInput = (el: HTMLInputElement | null) => { fileInput = el }
 
-/** Parse "report dB(S(1,1)) vs Freq phi=90 steer=32 polar" into traces. */
-function traceArgs(args: string[]): { traces: Trace[]; type?: 'rect' | 'polar' | 'smith' } | string {
+/**
+ * Parse what to plot. Quantities ("dB(S(1,1))", or a plot name like "s11"), a sweep ("vs Theta"), parameters
+ * ("steer=32"), a type ("polar"), and where the data comes from: "from paper" (the digitised curves), "run 2" /
+ * "runs 1 3", "latest", or both ("vs paper", "compare", "and paper"). Filler words are ignored.
+ */
+const FILLER = new Set(['from', 'of', 'the', 'our', 'my', 'mine', 'result', 'results', 'data', 'curve', 'curves', 'show', 'me', 'please', 'for', 'a', 'an', 'with', 'plot', 'graph', 'report', 'on', 'in', 'to', 'and', 'its', 'their', 'only', 'just', 'both', 'it'])
+interface Parsed { traces: Trace[]; type?: 'rect' | 'polar' | 'smith'; name: string; notes: string[] }
+function traceArgs(args: string[]): Parsed | string {
+  const s = S()
+  const low = args.map((a) => a.toLowerCase())
+  const paper = low.some((a) => /^papers?$/.test(a))
+  const both = paper && low.some((a, i) => a === 'compare' || a === 'overlay' || a === 'ours' || a === 'latest' || ((a === 'vs' || a === 'and' || a === 'with') && /^papers?$/.test(low[i + 1] ?? '')) || (/^papers?$/.test(a) && ['and', 'vs', 'with'].includes(low[i + 1] ?? '')))
+  const runs: number[] = []
   const exprs: string[] = [], params: Params = {}
-  let x: XVar | undefined, type: 'rect' | 'polar' | 'smith' | undefined
+  let x: XVar | undefined, type: Parsed['type']
+  const latest = low.some((a) => a === 'latest' || a === 'ours')
   for (let i = 0; i < args.length; i++) {
-    const a = args[i], m = /^(phi|steer|freq)=([-\d.]+)$/i.exec(a)
+    const a = args[i], l = low[i], m = /^(phi|steer|freq)=([-\d.]+)$/i.exec(a)
     if (m) params[m[1].toLowerCase() as keyof Params] = +m[2]
-    else if (a.toLowerCase() === 'vs') { const v = args[++i]?.toLowerCase(); x = v?.startsWith('th') ? 'Theta' : v?.startsWith('sc') ? 'ScanAng' : 'Freq' }
-    else if (['polar', 'smith', 'rect'].includes(a.toLowerCase())) type = a.toLowerCase() as typeof type
+    else if (l === 'vs' && /^(freq|theta|scan|th|f)/.test(low[i + 1] ?? '')) { const v = low[++i]; x = v.startsWith('th') ? 'Theta' : v.startsWith('sc') ? 'ScanAng' : 'Freq' }
+    else if (['polar', 'smith', 'rect', 'rectangular'].includes(l)) type = (l === 'rectangular' ? 'rect' : l) as Parsed['type']
+    else if (l === 'run' || l === 'runs') { while (i + 1 < args.length && /^[\d,]+$/.test(args[i + 1])) runs.push(...args[++i].split(',').filter(Boolean).map(Number)) }
+    else if (/^r?\d+$/.test(l) && (low[i - 1] === 'run' || low[i - 1] === 'runs')) runs.push(+l.replace('r', ''))
+    else if (/^papers?$|^compare$|^overlay$|^ours$|^latest$|^vs$/.test(l) || FILLER.has(l)) { /* source words and filler */ }
     else exprs.push(a)
   }
-  if (!exprs.length) return 'Which quantity? e.g. report dB(S(1,1))   (quantities: help report)'
-  const traces: Trace[] = []
-  for (const [i, e] of exprs.entries()) {
-    const p = parseExpr(e)
-    if (!p) return `Unknown quantity ${e}. Try: help report`
-    traces.push({ id: newTraceId(), q: p.q, fn: p.fn, x: x ?? (p.q.includes('Gain') && !p.q.startsWith('Peak') ? 'Theta' : 'Freq'), sol: -1, params, ...traceStyle(i) })
+  if (!exprs.length) return 'Which quantity? e.g. plot s11 from paper   (quantities: help report · plots: plots)'
+  // expand plot names ("s11", "pattern", "gain") into their quantities
+  const k = s.kind ?? 'patch'
+  const expanded: string[] = []
+  for (const e of exprs) {
+    if (parseExpr(e)) { expanded.push(e); continue }
+    const def = plotDef(e)
+    if (def?.report) {
+      const t = def.report(k, params.steer ?? s.a.theta).split(/\s+/).slice(1)
+      for (let i = 0; i < t.length; i++) {
+        const m = /^(phi|steer|freq)=([-\d.]+)$/.exec(t[i])
+        if (m) params[m[1] as keyof Params] ??= +m[2]
+        else if (t[i] === 'vs') x ??= t[++i] as XVar
+        else if (['polar', 'smith', 'rect'].includes(t[i])) type ??= t[i] as Parsed['type']
+        else expanded.push(t[i])
+      }
+      continue
+    }
+    return `Unknown quantity ${e}.`
   }
-  return { traces, type }
+  const tpl = expanded.map((e) => { const p = parseExpr(e)!; return { q: p.q, fn: p.fn, x: x ?? (p.q.includes('Gain') && !p.q.startsWith('Peak') ? 'Theta' as XVar : 'Freq' as XVar) } })
+  const notes: string[] = []
+  // whose data: explicit runs, the paper, or the latest run
+  let sols: number[] = runs.filter((r) => s.sols.some((x) => x.id === r))
+  runs.filter((r) => !s.sols.some((x) => x.id === r)).forEach((r) => notes.push(`no run ${r}`))
+  if (!sols.length && (!paper || both || latest)) sols = s.sols.length ? [-1] : []
+  if (!s.sols.length && !paper) notes.push('no solution yet: solve, or add "from paper"')
+  const traces: Trace[] = []
+  tpl.forEach((t, i) => sols.forEach((sol, j) => traces.push({ id: newTraceId(), q: t.q, fn: t.fn, x: t.x, sol, params: { ...params }, ...traceStyle(i * Math.max(1, sols.length) + j) })))
+  if (paper) {
+    let found = 0
+    tpl.forEach((t, i) => {
+      for (const r of s.reports.filter((rep) => rep.fig)) {
+        const ours = r.traces.filter((x) => !x.imported), imp = r.traces.filter((x) => x.imported)
+        const at = ours.findIndex((o) => o.q === t.q && o.fn === t.fn && o.x === t.x && (params.steer === undefined || o.params.steer === undefined || o.params.steer === params.steer))
+        if (at < 0) continue
+        const pick = imp.length === ours.length ? [imp[at]] : imp
+        for (const it of pick) if (!traces.some((x) => x.imported?.label === it.imported!.label)) { traces.push({ ...it, id: newTraceId(), color: sols.length || tpl.length > 1 ? traceStyle(i * Math.max(1, sols.length)).color : PAPER_INK, dash: '6 4' }); found++ }
+      }
+    })
+    if (!found) notes.push(`the paper has no figure of ${tpl.map((t) => (t.fn ? `${t.fn}(${t.q})` : t.q)).join(', ')}`)
+  }
+  if (!traces.length) return { traces, type, name: '', notes: [notes.join('; ') || 'Nothing to plot.'] } // understood, but no data
+  const what = tpl.map((t) => (t.fn ? `${t.fn}(${t.q})` : t.q)).join(', ').slice(0, 34)
+  const src = [sols.length ? sols.map((r) => (r === -1 ? 'latest' : `run ${r}`)).join(', ') : '', paper ? 'paper' : ''].filter(Boolean).join(' vs ')
+  return { traces, type, name: `${type === 'smith' ? `${tpl[0].q} Smith` : what}${src ? ` · ${src}` : ''}`, notes }
 }
 
 const activeReport = () => S().reports.find((r) => r.id === S().active)
@@ -75,15 +128,16 @@ export function openPlot(id: string, args: string[] = []) {
   if (!p.kinds.includes(s.kind)) { err(`${p.name} is for ${p.kinds.join(' / ')} designs.`); return }
   const num = (k: string) => { const m = args.map((a) => new RegExp(`^${k}=([-\\d.]+)$`, 'i').exec(a)).find(Boolean); return m ? +m[1] : undefined }
   const steer = num('steer') ?? s.a.theta
-  if (p.report) { const c = p.report(s.kind, steer); s.print('sys', `$ ${c}`); void runLine(c, false); return }
+  if (p.report) { const c = `report ${p.id} ${args.join(' ')}`.trim(); void runLine(c, false); return }
   if (p.id === 'gain3d') { s.open(`g3d|${num('freq') ?? (s.kind === 'array' ? 2.43 : +((s.setup.f1 + s.setup.f2) / 2).toFixed(3))}|${steer}`); return }
   s.open(`tool:${p.id}`)
 }
 
-interface Cmd { name: string; usage: string; help: string; run: (a: string[]) => void | Promise<void> }
+/** A command returns a string when it couldn't make sense of its arguments; the line then goes to the solver. */
+interface Cmd { name: string; usage: string; help: string; run: (a: string[]) => void | string | Promise<void | string> }
 export const COMMANDS: Cmd[] = [
   { name: 'help', usage: 'help [command]', help: 'list commands', run: (a) => {
-    if (a[0] === 'report') { out('quantities: S(1,1) Z(1,1) VSWR(1) ActiveS(1,1) GainTotal RealizedGainTotal PeakGain PeakRealizedGain PeakDirectivity RadiationEfficiency TotalEfficiency AcceptedPower ReflectedPower RadiatedPower DielectricLoss ConductorLoss BeamPointing SideLobeLevel'); out('functions: dB mag re im ang dB10 · sweeps: vs Freq | Theta | ScanAng · params: phi= steer= freq= · type: rect polar smith'); return }
+    if (a[0] === 'report') { out('quantities: S(1,1) Z(1,1) VSWR(1) ActiveS(1,1) GainTotal RealizedGainTotal PeakGain PeakRealizedGain PeakDirectivity RadiationEfficiency TotalEfficiency AcceptedPower ReflectedPower RadiatedPower DielectricLoss ConductorLoss BeamPointing SideLobeLevel'); out('functions: dB mag re im ang dB10 · sweeps: vs Freq | Theta | ScanAng · params: phi= steer= freq= · type: rect polar smith'); out('data: from paper · run 2 · runs 1 3 · latest · vs paper (both) · plot names work too: plot s11 vs paper · plot fig 5c'); return }
     const c = COMMANDS.find((x) => x.name === a[0])
     if (c) { out(`${c.usage}  ${c.help}`); return }
     for (const x of COMMANDS) out(`${x.usage.padEnd(34)} ${x.help}`)
@@ -116,17 +170,20 @@ export const COMMANDS: Cmd[] = [
     if (!(f2 > f1)) { const s = S().setup; out(`Setup1 sweep ${s.f1}–${s.f2} GHz, ${s.n} pts`); return }
     S().set({ setup: { f1, f2, n: Number.isFinite(n) ? Math.max(11, Math.round(n)) : S().setup.n }, dirty: S().sols.length > 0 }); out(`Setup1 sweep ${f1}–${f2} GHz`)
   } },
-  { name: 'report', usage: 'report <expr> [vs X] [k=v] [polar]', help: 'new report, e.g. report dB(S(1,1))', run: (a) => {
+  { name: 'report', usage: 'report <expr> [vs X] [k=v] [polar] [from paper|run N|vs paper]', help: 'new report, e.g. report s11 vs paper', run: (a) => {
     const r = traceArgs(a)
-    if (typeof r === 'string') { err(r); return }
-    const rep = S().addReport({ name: r.type === 'smith' ? `${r.traces[0].q} Smith` : r.traces.map(traceLabel).join(', ').slice(0, 40), type: r.type ?? (r.traces[0].x === 'Theta' ? 'polar' : 'rect'), traces: r.traces })
-    if (!S().sols.length) out(`${rep.name} created · no solution yet: solve`)
+    if (typeof r === 'string') return r
+    if (!r.traces.length) { err(r.notes[0]); return }
+    S().addReport({ name: r.name, type: r.type ?? (r.traces[0].x === 'Theta' ? 'polar' : 'rect'), traces: r.traces })
+    r.notes.forEach((n) => out(n))
   } },
   { name: 'trace', usage: 'trace <expr> [vs X] [k=v]', help: 'add trace to the active report', run: (a) => {
     const rep = activeReport()
     if (!rep) { err('No active report. Use report <expr>'); return }
     const r = traceArgs(a)
-    if (typeof r === 'string') { err(r); return }
+    if (typeof r === 'string') return r
+    if (!r.traces.length) { err(r.notes[0]); return }
+    r.notes.forEach((x) => out(x))
     const n = rep.traces.filter((t) => !t.imported).length
     S().patchReport(rep.id, { traces: [...rep.traces, ...r.traces.map((t, i) => ({ ...t, ...traceStyle(n + i) }))] })
   } },
@@ -136,7 +193,20 @@ export const COMMANDS: Cmd[] = [
     const at = a[0] === 'min' ? 'min' : a[0] === 'max' || !a[0] ? 'max' : +a[0]
     addMarker(rep, at as 'max' | 'min' | number, seriesNow(rep))
   } },
-  { name: 'plot', usage: 'plot <name> [freq=] [steer=]', help: 'open any plot or tool (see: plots)', run: (a) => { if (!a[0]) { err('usage: plot <name>   names: plots'); return } openPlot(a[0], a.slice(1)) } },
+  { name: 'plot', usage: 'plot <name|expr|fig N> [from paper|run N|vs paper] [k=v]', help: 'open any plot, tool or paper figure (see: plots)', run: (a) => {
+    const w = a.filter((x) => !FILLER.has(x.toLowerCase()))
+    if (!w.length) { err('usage: plot <name>   names: plots'); return }
+    const fig = /^(fig\.?|figure)$/i.test(w[0]) ? w[1] : /^fig\.?(\w+)$/i.exec(w[0])?.[1]
+    if (fig) {
+      const r = S().reports.find((x) => x.fig && x.fig.toLowerCase().replace(/\s+/g, '') === `fig.${fig.toLowerCase()}`)
+      if (!r) return `No paper figure ${fig}.`
+      if (w.some((x) => /^papers?$/i.test(x)) && !w.some((x) => /^(vs|compare|ours|run)$/i.test(x))) { S().addReport({ name: `${r.fig} · paper`, type: r.type, xRange: r.xRange, traces: r.traces.filter((t) => t.imported).map((t) => ({ ...t, id: newTraceId() })) }); return }
+      S().open(r.id); return
+    }
+    const def = plotDef(w[0])
+    if (def && !def.report) { openPlot(w[0], w.slice(1)); return }
+    return COMMANDS.find((c) => c.name === 'report')!.run(a)
+  } },
   { name: 'plots', usage: 'plots', help: 'list every plot and tool', run: () => {
     const k = S().kind ?? 'patch'
     for (const g of ['Standard', 'Insight', 'Array', 'Solve'] as const) {
@@ -170,7 +240,13 @@ export async function runLine(raw: string, echo = true) {
   if (echo) { S().print('in', line); S().set({ hist: [...S().hist.filter((h) => h !== line).slice(-80), line] }) }
   const [head, ...args] = line.replace(/^\$\s*/, '').split(/\s+/)
   const c = !line.startsWith('?') && COMMANDS.find((x) => x.name === head.toLowerCase() || (head.toLowerCase() === 'analyze' && x.name === 'solve'))
-  if (c) { try { await c.run(args) } catch (e) { err(String(e)) } return }
+  if (c) {
+    try {
+      const miss = await c.run(args)
+      if (typeof miss === 'string') { if (echo) { S().print('sys', `${miss} Asking the solver to interpret it.`); await ask(line) } else err(miss) }
+    } catch (e) { err(String(e)) }
+    return
+  }
   await ask(line.replace(/^\?\s*/, ''))
 }
 
@@ -248,17 +324,20 @@ export function localAnswer(q: string): { text: string; act: boolean } {
     if (tool) return go(`plot ${tool[1]}`)
   }
   if (near(q, /\b(plot|show|graph|draw)\b/)) {
-    if (near(q, /smith/)) return go('report S(1,1) smith')
-    if (near(q, /impedance|z11|resistance/)) return go('report re(Z(1,1)) im(Z(1,1))')
-    if (near(q, /vswr/)) return go('report VSWR(1)')
-    if (near(q, /active/)) return go('report dB(ActiveS(1,1)) vs ScanAng')
-    if (near(q, /squint|point/)) return go('report BeamPointing')
-    if (near(q, /side ?lobe|sll/)) return go('report SideLobeLevel vs ScanAng')
+    // keep where the data comes from: the paper, ours, or both
+    const src = near(q, /paper/) ? (near(q, /compare|\bvs\b|versus|against|\band\b|overlay|\bours?\b/) ? ' vs paper' : ' from paper') : ''
+    const goP = (c: string) => go(c + src)
+    if (near(q, /smith/)) return goP('report S(1,1) smith')
+    if (near(q, /impedance|z11|resistance/)) return goP('report re(Z(1,1)) im(Z(1,1))')
+    if (near(q, /vswr/)) return goP('report VSWR(1)')
+    if (near(q, /active/)) return goP('report dB(ActiveS(1,1)) vs ScanAng')
+    if (near(q, /squint|point/)) return goP('report BeamPointing')
+    if (near(q, /side ?lobe|sll/)) return goP('report SideLobeLevel vs ScanAng')
     if (near(q, /pattern|radiation|far ?field/)) return go(s.kind === 'array' ? `report RealizedGainTotal vs Theta steer=${s.a.theta}` : 'report RealizedGainTotal vs Theta phi=90 polar')
     if (near(q, /gain|directiv/)) return go(s.kind === 'array' ? 'report PeakRealizedGain vs ScanAng' : 'report PeakGain PeakRealizedGain')
-    if (near(q, /efficien/)) return go('report dB10(RadiationEfficiency) dB10(TotalEfficiency)')
-    if (near(q, /power|loss/)) return go('report AcceptedPower RadiatedPower DielectricLoss ConductorLoss')
-    return go('report dB(S(1,1))')
+    if (near(q, /efficien/)) return goP('report dB10(RadiationEfficiency) dB10(TotalEfficiency)')
+    if (near(q, /power|loss/)) return goP('report AcceptedPower RadiatedPower DielectricLoss ConductorLoss')
+    return goP('report dB(S(1,1))')
   }
   const target = /(?:at|to)\s+([\d.]+)\s*ghz/i.exec(q)
   if (target && near(q, /resonat|tune|move|cent(er|re)|shift/) && last) {
