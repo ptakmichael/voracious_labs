@@ -1,5 +1,6 @@
 export type FieldKind = 'E' | 'H' | 'J' | 'S'
 export const FIELD_COLORS: Record<FieldKind, string> = { E: '#2c4a72', H: '#2f6a4c', J: '#cf4520', S: '#b07d12' }
+export const FIELD_COLORS_DARK: Record<FieldKind, string> = { E: '#86a6d1', H: '#62b086', J: '#e5653d', S: '#d9a23a' }
 /** The fields view draws the board this many times thicker so the inside is visible. */
 export const THICK = 4
 

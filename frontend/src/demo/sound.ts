@@ -27,4 +27,9 @@ export function playBuildSound(late = 0) {
   } catch { /* not loaded yet or blocked: the demo carries on silently */ }
 }
 
-export function stopBuildSound() { if (el) { el.pause() } }
+export function stopBuildSound() { if (el) { el.pause() } held = false }
+
+let held = false
+/** Stop / Resume: hold the sound where it is and pick it up again. */
+export function holdBuildSound() { if (el && !el.paused) { el.pause(); held = true } }
+export function releaseBuildSound() { if (el && held) { void el.play().catch(() => {}) } held = false }

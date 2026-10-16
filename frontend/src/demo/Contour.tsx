@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { type Design, worstInBand } from './model'
+import { useTheme } from './theme'
 
 const LEVELS = [-25, -20, -15, -12, -10, -8, -6, -4, -2]
 // good (deep match) is dark green ink, bad fades into the paper
-const RAMP = ['#1f4a35', '#2f6a4c', '#4f8566', '#7aa287', '#a9c0a8', '#d8d4c2', '#e4ded0', '#ebe6da', '#f0ece3', '#f5f2ec']
+const LIGHT = ['#1f4a35', '#2f6a4c', '#4f8566', '#7aa287', '#a9c0a8', '#d8d4c2', '#e4ded0', '#ebe6da', '#f0ece3', '#f5f2ec']
+const DARK = ['#8fe0b2', '#62b086', '#4a8f69', '#3a7154', '#2e5843', '#2d3b32', '#29302a', '#252825', '#22211e', '#1f1e1b']
+const RAMP = LIGHT
+export const contourRamp = (dark: boolean) => (dark ? DARK : LIGHT)
 const X: [number, number] = [4, 12] // inset depth
 const Y: [number, number] = [27.6, 31.4] // patch length
 const NX = 81, NY = 61
@@ -13,6 +17,7 @@ export function Contour({ d, path, onPick, height = 330 }: { d: Design; path: De
   const wrap = useRef<HTMLDivElement>(null)
   const cv = useRef<HTMLCanvasElement>(null)
   const [W, setW] = useState(500)
+  const dark = useTheme((t) => t.dark)
   const m = { l: 52, r: 12, t: 10, b: 40 }
   const pw = W - m.l - m.r, ph = height - m.t - m.b
   const grid = useMemo(() => {
@@ -52,13 +57,13 @@ export function Contour({ d, path, onPick, height = 330 }: { d: Design; path: De
       const k = lvl[y * w + x]
       const edge = (x + 1 < w && lvl[y * w + x + 1] !== k) || (y + 1 < h && lvl[(y + 1) * w + x] !== k)
       const goalEdge = edge && (Math.min(k, x + 1 < w ? lvl[y * w + x + 1] : k, y + 1 < h ? lvl[(y + 1) * w + x] : k) === 4)
-      const hex = goalEdge ? '#cf4520' : edge ? '#3b3934' : RAMP[k]
+      const hex = goalEdge ? (dark ? '#e5653d' : '#cf4520') : edge ? (dark ? '#77726a' : '#3b3934') : contourRamp(dark)[k]
       const o = (y * w + x) * 4
       img.data[o] = parseInt(hex.slice(1, 3), 16); img.data[o + 1] = parseInt(hex.slice(3, 5), 16); img.data[o + 2] = parseInt(hex.slice(5, 7), 16)
       img.data[o + 3] = edge && !goalEdge ? 150 : 255
     }
     g.putImageData(img, 0, 0)
-  }, [grid, pw, ph])
+  }, [grid, pw, ph, dark])
   const px = (y0: number) => m.l + ((y0 - X[0]) / (X[1] - X[0])) * pw
   const py = (L: number) => m.t + ((Y[1] - L) / (Y[1] - Y[0])) * ph
   const pick = (e: React.MouseEvent) => {

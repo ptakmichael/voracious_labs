@@ -13,9 +13,20 @@ npm run dev            # open http://localhost:5173/demo.html, full screen (F11)
 
 The Lego build sound (`frontend/public/sfx/lego-build.mp3`, from `Lego building sfx.mp3`) plays while the 3D model flies together, with the minikit jingle on the moment it's built. Turn it off with "sound on" in the top bar.
 
-The paper in this folder is arXiv 2211.13096 (Islam & Shikha, a 2.4 GHz inset-fed patch on FR-4). The app
-recognises it and highlights Table 1, eq. (6), Fig. 3 and Fig. 5. Page through it with the ‹ › buttons, the scroll wheel or the arrow keys. Any other PDF falls back to building from the
+There are two papers in this folder. arXiv 2211.13096 (Islam & Shikha, a 2.4 GHz inset-fed patch on FR-4) runs the
+patch demo below; arXiv 2508.20905 (Saad et al., a 4×4 phased array at 2.4 GHz) runs the array demo at the end. The app
+recognises the patch paper and highlights Table 1, eq. (6), Fig. 3 and Fig. 5. Page through it with the ‹ › buttons, the scroll wheel or the arrow keys. Any other PDF falls back to building from the
 design equations.
+
+## Landing page and modeler
+
+The page opens on **Start a design**: a project tree on the left and three choices. **Upload context** (or dropping
+the PDF anywhere) is the run sheet below. **Empty design** opens the modeler: draw boxes (B), cylinders (C),
+rectangles (R), circles (O) and ports (P) in the XY/XZ/YZ plane (1/2/3) or on any face you hover; everything snaps to
+the grid, corners, edge midpoints and face centres. Select (S) and drag the gizmo to move; it snaps flush to other
+faces. Ctrl+Z / Ctrl+Y, Ctrl+D, Del, F to fit. **Insert ▸ Patch antenna** drops in an editable patch; **Solve** hands
+any model that reads as an inset-fed patch to the solver (the only kind the demo's mock solver handles). Templates
+are marked "coming soon". Click the Smart EM mark to get back to the landing page.
 
 ## Run sheet (~60–90 s; skip rows to fit)
 
@@ -42,3 +53,24 @@ In the chat box, **Tab** types the suggested message at typing speed and **Enter
 Other things it answers: "which parts of the patch matter most at the top of the band?", "what does patch width do?", "what was wrong with the paper?", "why did you solve it
 that way?", "make it smaller", "what about gain?". You can also drag any slider on the left at any time, or use
 **Pause** / **Take over** while it tunes.
+
+## Array run sheet (~60–90 s)
+
+Uses `Saad_2025_4x4_phased_array_2.4GHz_arXiv_2508.20905.pdf`. Same chat controls: **Tab** types the suggestion,
+**Enter** sends it. (`ARRAY_DEMO` in `frontend/src/demo/PaperView.tsx` hides this path when set to false.)
+
+| # | You do | What shows |
+|---|---|---|
+| 1 | Drag the Saad PDF onto the window | Paper opens on Table I, Fig. 1, Fig. 2 and Fig. 5 |
+| 2 | Tab, Enter | Reads the paper, builds the 4×4 in 3D (16 inset-fed patches on Rogers 6010.2LM), flags 4 things in the paper |
+| 3 | Click **Solve** | Unit cell, then the full array; inset feed only matched to about −10 dB, misses the ±42° goal |
+| 4 | Click **Optimise it** | Element length and inset, then spacing for coupling, then a taper for sidelobes; "Done after N runs" |
+| 5 | **Summary** | Before/after for the array: active match, sidelobes and gain across the scan |
+| 6 | **Paper vs ours** | All 7 results figures, our curves on the originals (or side by side); a finding under each, e.g. the paper's S11 dip is at 2.377 GHz, and one-snapshot direction finding lands within ~1° where the paper's was 50° off |
+| 7 | **Explore ▸ Array designer** | Steer, taper, phase-shifter bits, true-time delay; click elements to fail them; pointing table |
+| 8 | **u-v space** | Visible circle, the beam and its grating-lobe copies, the safe scan region |
+| 9 | **Scan performance** | Gain and active match across the scan; beam squint over frequency |
+| 10 | Tab, Enter, repeated | "Where does the beam really point at 42°?", "two elements fail?", "how many bits?", "spacing for 60°?", "beam squint?", "what was wrong with the paper?" |
+
+The chat questions are `ARRAY_QUESTIONS` in `frontend/src/demo/Demo.tsx`. **How it was solved ▸ Why these choices**
+ties each solver, mesh, sweep and optimiser choice to the geometry, for both demos.

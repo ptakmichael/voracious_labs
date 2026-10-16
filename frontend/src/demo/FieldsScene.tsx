@@ -4,7 +4,8 @@ import { type MutableRefObject, useLayoutEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { FEED_W, type Design } from './model'
 import { SLOT, Scene3D, frame } from './Scene3D'
-import { FIELD_COLORS, type FieldKind, THICK } from './fieldsConst'
+import { FIELD_COLORS as LIGHT_FIELDS, FIELD_COLORS_DARK, type FieldKind, THICK } from './fieldsConst'
+import { useTheme } from './theme'
 
 /**
  * Textbook fields of the patch's first mode (cavity model), animated through one cycle:
@@ -78,6 +79,7 @@ function PhaseClock({ ph, playing, fixed }: { ph: MutableRefObject<number>; play
 }
 
 function Fields({ d, show, style, amp, ph }: { d: Design; show: FieldKind[]; style: 'vectors' | 'lines'; amp: number; ph: MutableRefObject<number> }) {
+  const FIELD_COLORS = useTheme((t) => t.dark) ? FIELD_COLORS_DARK : LIGHT_FIELDS
   const H = d.h * THICK
   const { Ls, py } = frame(d)
   const yb = py - d.L / 2, L = d.L, a = FEED_W / 2 + SLOT

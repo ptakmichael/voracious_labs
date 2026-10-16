@@ -167,7 +167,7 @@ export function RunTree() {
               <LineChart height={130} xDomain={F_RANGE} yDomain={[-35, 1]} yTicks={[0, -10, -20, -30]} xTicks={[2.2, 2.4, 2.6, 2.8]} xFmt={(v) => v.toFixed(1)}
                 vbands={[{ x1: GOAL.f1, x2: GOAL.f2, color: 'var(--ok)', opacity: 0.13 }]} hlines={[{ y: GOAL.db, color: 'var(--sig)', dash: '5 4' }]}
                 series={[
-                  ...(cmp ? [{ x: FREQS, y: curve(cmp.d), color: twin ? 'var(--ok)' : '#bdb6a6', width: twin ? 2 : 1.4, dash: twin ? '5 3' : undefined }] : []),
+                  ...(cmp ? [{ x: FREQS, y: curve(cmp.d), color: twin ? 'var(--ok)' : 'var(--faint)', width: twin ? 2 : 1.4, dash: twin ? '5 3' : undefined }] : []),
                   { x: FREQS, y: curve(cur.d), color: cur.kind === 'probe' ? 'var(--faint)' : 'var(--sig)', width: 2.2 },
                 ]} />
             </div>

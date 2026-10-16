@@ -3,12 +3,22 @@ import { LineChart, type Series } from '../components/charts/LineChart'
 import {
   type Design, FREQS, PAPER_FIXED, F_RANGE, GOAL, VARS, curve, lerp,
 } from './model'
-import { BUILD_SECS, READ_SECS, SOLVE_SECS, TUNE_SECS, VERIFY_SECS, type Msg, type Tab, now, useDemo } from './store'
+import { BUILD_SECS, SOLVE_SECS, readDur, TUNE_SECS, VERIFY_SECS, type Msg, type Tab, now, useDemo } from './store'
 import { PaperView } from './PaperView'
 import { ExplorePane } from './Understand'
 import { SolveReport } from './SolveReport'
+import { SummaryPane } from './Summary'
+import { ComparePane } from './Compare'
+import { ArrayResults, ArraySide } from './ArrayTools'
+import { ARRAY_GOAL, SCAN_MAX } from './arrayModel'
+import { Home } from './Home'
+import { MenuBar } from './MenuBar'
+import { useTheme } from './theme'
+import { Modeler } from './modeler/Modeler'
+import { useModel } from './modeler/model'
 
 const Scene3D = lazy(() => import('./Scene3D').then((m) => ({ default: m.Scene3D })))
+const ArrayScene = lazy(() => import('./ArrayScene').then((m) => ({ default: m.ArrayScene })))
 
 const clamp01 = (v: number) => Math.min(1, Math.max(0, v))
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`
@@ -25,6 +35,26 @@ function useClock() {
   return t
 }
 
+// ---------------------------------------------------------------- stop / resume
+
+const RUNNING: Partial<Record<string, string>> = { reading: 'Reading and building', solving: 'Solving', tuning: 'Tuning' }
+
+/** Stop freezes whatever step is running (reading, building, solving, tuning); Resume carries on from there. */
+function RunControl({ variant = 'btn' }: { variant?: 'btn' | 'icon' | 'float' }) {
+  const s = useDemo()
+  const what = RUNNING[s.phase]
+  if (!what) return null
+  const label = s.paused ? 'Resume' : 'Stop'
+  if (variant === 'icon') return <button className={`step-run${s.paused ? ' held' : ''}`} title={`${label} ${what.toLowerCase()}`} onClick={(e) => { e.stopPropagation(); s.togglePause() }}>{s.paused ? '▶' : '■'}</button>
+  if (variant === 'float') return (
+    <div className={`run-float${s.paused ? ' held' : ''}`}>
+      <span className={`lamp${s.paused ? '' : ' run'}`} />{s.paused ? `${what}: stopped` : `${what}…`}
+      <button className={`btn${s.paused ? ' sig' : ''}`} onClick={s.togglePause}>{s.paused ? '▶ Resume' : '■ Stop'}</button>
+    </div>
+  )
+  return <button className={`btn${s.paused ? ' sig' : ''}`} onClick={s.togglePause}>{s.paused ? '▶ Resume' : '■ Stop'}</button>
+}
+
 // ---------------------------------------------------------------- top bar
 
 function Mark() {
@@ -38,29 +68,35 @@ function Mark() {
 
 function TopBar({ t }: { t: number }) {
   const s = useDemo()
+  const dark = useTheme((x) => x.dark)
   const step = s.tab === 'explore' && s.runs.length ? 3 : s.phase === 'tuning' || s.phase === 'done' ? 2 : s.phase === 'solving' || s.phase === 'solved' ? 1 : 0
   const doneUpTo = s.phase === 'done' ? 3 : s.runs.length ? 1 : s.phase === 'built' ? 0 : -1
   let sim = s.runs.reduce((a, r) => a + r.sim, 0)
   if (s.phase === 'solving') sim += clamp01((t - s.phaseAt) / (s.solveKind === 'first' ? SOLVE_SECS : VERIFY_SECS)) * (s.solveKind === 'first' ? 94 : 31)
-  if (s.phase === 'tuning' && !s.paused) sim += clamp01(1 - (s.nextRunAt - t) / TUNE_SECS) * 31
-  const busy = s.phase === 'reading' || s.phase === 'solving' || (s.phase === 'tuning' && !s.paused)
-  const name = s.pdf ? s.pdf.name.replace(/\.pdf$/i, '') : s.source === 'text' ? 'patch-2g4' : 'untitled'
+  if (s.phase === 'tuning') sim += clamp01(1 - (s.nextRunAt - t) / TUNE_SECS) * 31
+  const busy = (s.phase === 'reading' || s.phase === 'solving' || s.phase === 'tuning') && !s.paused
+  const mname = useModel((m) => m.project)
+  const name = s.screen === 'home' ? 'all projects' : s.pdf ? s.pdf.name.replace(/\.pdf$/i, '') : s.source === 'text' ? 'patch-2g4' : s.source === 'cad' || s.screen === 'modeler' ? mname : 'untitled'
   return (
     <header className="bar">
-      <div className="mark"><Mark />{BRAND}</div>
+      <button className="mark" onClick={() => s.setScreen('home')} title="Home: all projects">{<Mark />}{BRAND}</button>
+      {s.screen !== 'home' && <button className="back-home" onClick={() => s.setScreen('home')} title="Back to the landing page. Your design stays open.">← All projects</button>}
       <div className="proj">project <b title={name}>{name.length > 34 ? name.slice(0, 32) + '…' : name}</b></div>
       <nav className="steps">
         {['Describe', 'Solve', 'Tune', 'Understand'].map((n, i) => (
           <div key={n} className={`step${i === step ? ' on' : ''}${i <= doneUpTo && i !== step ? ' done' : ''}`}>
             <span className="n">0{i + 1}</span>{n}
+            {i === step && i < 3 && RUNNING[s.phase] && <RunControl variant="icon" />}
             {i <= doneUpTo && i !== step && <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 6.5 5 9 10 3" fill="none" stroke="var(--ok)" strokeWidth="1.8" /></svg>}
           </div>
         ))}
       </nav>
       <div className="clock">
-        <span><span className={`lamp${busy ? ' run' : s.phase === 'done' ? ' ok' : ''}`} />{busy ? (s.phase === 'reading' ? 'reading' : s.phase === 'tuning' ? 'tuning' : 'solving') : s.phase === 'done' ? 'goal met' : s.paused ? 'paused' : 'idle'}</span>
+        <span><span className={`lamp${busy ? ' run' : s.phase === 'done' ? ' ok' : ''}`} />{busy ? (s.phase === 'reading' ? 'reading' : s.phase === 'tuning' ? 'tuning' : 'solving') : s.phase === 'done' ? 'goal met' : s.paused ? 'stopped' : 'idle'}</span>
+        {RUNNING[s.phase] && <button className={`clock-run${s.paused ? ' held' : ''}`} onClick={s.togglePause}>{s.paused ? '▶ resume' : '■ stop'}</button>}
         <span>solver time <b>{mmss(sim)}</b></span>
         <span>runs <b>{s.runs.length}</b></span>
+        <button className="link" onClick={useTheme.getState().toggle} title="Switch light / dark">{dark ? 'light mode' : 'dark mode'}</button>
         <button className="link" onClick={s.toggleSound} title="Lego build sound">{s.sound ? 'sound on' : 'sound off'}</button>
         <button className="link" onClick={() => { if (confirm('Start over?')) s.reset() }}>reset</button>
       </div>
@@ -76,7 +112,7 @@ const TAGS: Partial<Record<keyof Design, string>> = { L: 'Table 1', W: 'Table 1'
 
 function SpecSheet({ t }: { t: number }) {
   const s = useDemo()
-  const built = s.phase !== 'empty' && !(s.phase === 'reading' && t - s.phaseAt < (s.source === 'paper' ? READ_SECS : 2.4))
+  const built = s.phase !== 'empty' && !(s.phase === 'reading' && t - s.phaseAt < readDur(s.source))
   const readT = s.phase === 'reading' ? t - s.phaseAt : 99
   const last = s.runs[s.runs.length - 1]
   const edited = last && !same(last.d, s.design)
@@ -85,14 +121,17 @@ function SpecSheet({ t }: { t: number }) {
     <aside className="col left">
       <section className="sec">
         <h4>Goal</h4>
-        <div className="goal">S11 below −10 dB<small>2.400 – 2.480 GHz · Wi-Fi / BLE</small></div>
+        {s.kind === 'array'
+          ? <div className="goal">Steer ±{SCAN_MAX}°, matched and clean<small>active S11 &lt; {ARRAY_GOAL.active} dB · sidelobes &lt; {ARRAY_GOAL.sll} dB · {GOAL.f1.toFixed(3)} – {GOAL.f2.toFixed(3)} GHz</small></div>
+          : <div className="goal">S11 below −10 dB<small>{GOAL.f1.toFixed(3)} – {GOAL.f2.toFixed(3)} GHz · {GOAL.label}</small></div>}
       </section>
       <section className="sec">
         <h4>Source</h4>
         {s.pdf ? (
-          <div className="src"><div className="doc" /><div><div className="ellip">{s.pdf.name}</div><div className="mono small mute">{s.source === 'paper' ? 'Table 1 · eq. (6) · Fig. 3' : 'attached'}</div></div></div>
-        ) : s.source === 'text' ? <div className="src mute">Typed description · design equations</div> : <div className="src mute">Nothing yet</div>}
+          <div className="src"><div className="doc" /><div><div className="ellip">{s.pdf.name}</div><div className="mono small mute">{s.kind === 'array' ? 'Table I · Fig. 2 · Fig. 5' : s.source === 'paper' ? 'Table 1 · eq. (6) · Fig. 3' : 'attached'}</div></div></div>
+        ) : s.source === 'text' ? <div className="src mute">Typed description · design equations</div> : s.source === 'cad' ? <div className="src mute">Drawn in the modeler · read as an inset-fed patch</div> : <div className="src mute">Nothing yet</div>}
       </section>
+      {s.kind === 'array' ? <ArraySide built={built} /> : (<>
       <section className="sec grow">
         <h4>Design <span>{built ? (locked ? 'locked while running' : 'drag to edit') : ''}</span></h4>
         {!built && <div className="mute small">{s.phase === 'reading' ? 'Pulling dimensions…' : 'Appears once the model is built.'}</div>}
@@ -133,6 +172,7 @@ function SpecSheet({ t }: { t: number }) {
           </>
         ) : <div className="mute small">No runs yet.</div>}
       </section>
+      </>)}
     </aside>
   )
 }
@@ -160,6 +200,8 @@ function Tabs() {
   const tabs: [Tab, string, boolean][] = [
     ['paper', 'Paper', !!s.pdf],
     ['model', '3D model', s.phase !== 'empty'],
+    ['summary', 'Summary', s.runs.length > 0],
+    ['compare', 'Paper vs ours', s.runs.length > 0 && (s.kind === 'array' || !!s.pdf?.known)],
     ['results', 'Results', s.runs.length > 0 || s.phase === 'solving'],
     ['explore', 'Explore', s.runs.length > 0],
   ]
@@ -172,16 +214,19 @@ function Tabs() {
 
 function ModelPane({ t }: { t: number }) {
   const s = useDemo()
-  const readDur = s.source === 'paper' ? READ_SECS : 2.4
-  const bt = s.phase === 'reading' ? t - s.phaseAt - readDur : 99
+  const rd = readDur(s.source)
+  const bt = s.phase === 'reading' ? t - s.phaseAt - rd : 99
   const pulse = t - s.feedFocusAt < 6 ? t - s.feedFocusAt : 0
   return (
     <div className="pane-fill">
       <Suspense fallback={null}>
-        <Scene3D d={s.design} bt={bt} current={s.runs.length ? 1 : 0} pulse={pulse} labels={bt > BUILD_SECS - 0.3} fixes={s.source === 'paper'} spin={s.phase !== 'empty'} />
+        {s.kind === 'array'
+          ? <ArrayScene el={s.design} a={s.arr} bt={bt} labels={bt > BUILD_SECS - 0.3} beam={s.runs.length > 0} spin={s.phase !== 'empty' && !s.runs.length} />
+          : <Scene3D d={s.design} bt={bt} current={s.runs.length ? 1 : 0} pulse={pulse} labels={bt > BUILD_SECS - 0.3} fixes={s.source === 'paper'} spin={s.phase !== 'empty'} />}
       </Suspense>
       {s.phase === 'reading' && bt < 0 && <div className="overlay-note">Working out the geometry…</div>}
-      {s.runs.length > 0 && <div className="cap-l">surface current at {s.runs[s.runs.length - 1].m.f0.toFixed(2)} GHz</div>}
+      {s.runs.length > 0 && s.kind === 'array' && <div className="cap-l">beam steered to {s.arr.theta}° · change it in Explore ▸ Array designer</div>}
+      {s.runs.length > 0 && s.kind !== 'array' && <div className="cap-l">surface current at {s.runs[s.runs.length - 1].m.f0.toFixed(2)} GHz</div>}
       <div className="hint">drag to orbit · scroll to zoom</div>
       {s.phase === 'built' && <button className="btn sig big-action" onClick={s.solve}>Solve  →</button>}
     </div>
@@ -204,7 +249,7 @@ function PlanCard({ t }: { t: number }) {
   const bars = clamp01((e - 1.2) / 1.2)
   return (
     <div className="card">
-      <div className="card-h"><h3>How I'm solving it</h3><span className="aside">picked for this problem</span></div>
+      <div className="card-h"><h3>How I'm solving it</h3><span className="aside">{s.phase === 'solving' ? <RunControl /> : 'picked for this problem'}</span></div>
       <div className="card-b plan">
         <ol>
           {PLAN.map((p, i) => {
@@ -227,8 +272,8 @@ function PlanCard({ t }: { t: number }) {
 function TuneCard({ t }: { t: number }) {
   const s = useDemo()
   const tuning = s.phase === 'tuning'
-  const n = s.runs.filter((r) => r.label.startsWith('Tune')).length
-  const k = tuning && !s.paused ? clamp01(1 - (s.nextRunAt - t) / TUNE_SECS) : 0
+  const n = s.runs.filter((r) => r.label.startsWith('Tune') || r.label.startsWith('Optimise')).length
+  const k = tuning ? clamp01(1 - (s.nextRunAt - t) / TUNE_SECS) : 0
   const last = s.runs[s.runs.length - 1]
   return (
     <div className="card">
@@ -236,22 +281,24 @@ function TuneCard({ t }: { t: number }) {
       <div className="card-b">
         {tuning ? (
           <>
-            <p className="tight">Moving patch length and inset depth together until the whole band is under −10 dB. You can leave this running.</p>
+            <p className="tight">{s.kind === 'array' ? 'Re-centring the element, then opening the spacing to cut coupling, then tapering the sidelobes, until it stays matched and clean out to ±42°.' : 'Moving patch length and inset depth together until the whole band is under −10 dB.'} You can leave this running.</p>
             <div className="track thin"><div className="fill" style={{ width: `${k * 100}%`, background: s.paused ? 'var(--faint)' : 'var(--sig)' }} /></div>
             <div className="row-btns">
-              <button className="btn" onClick={s.togglePause}>{s.paused ? 'Resume' : 'Pause'}</button>
+              <RunControl />
               <button className="btn" onClick={s.takeOver}>Take over</button>
             </div>
           </>
         ) : s.phase === 'done' ? (
           <>
-            <p className="tight">2.40–2.48 GHz covered after {s.runs.length} runs. Worst case <b>{last?.m.worst.toFixed(1)} dB</b>, bandwidth <b>{last?.m.bw.toFixed(0)} MHz</b>.</p>
-            <div className="row-btns"><button className="btn pri" onClick={() => s.setTab('explore')}>See what drives it  →</button></div>
+            {s.kind === 'array' && last?.am
+              ? <p className="tight">Steers to ±{SCAN_MAX}° after {s.runs.length} runs. Worst active match <b>{last.am.activeWorst.toFixed(1)} dB</b>, worst sidelobe <b>{last.am.sllWorst.toFixed(1)} dB</b>.</p>
+              : <p className="tight">2.40–2.48 GHz covered after {s.runs.length} runs. Worst case <b>{last?.m.worst.toFixed(1)} dB</b>, bandwidth <b>{last?.m.bw.toFixed(0)} MHz</b>.</p>}
+            <div className="row-btns"><button className="btn pri" onClick={() => s.setTab('explore')}>{s.kind === 'array' ? 'Open the array tools' : 'See what drives it'}  →</button></div>
           </>
         ) : (
           <>
-            <p className="tight">{last ? `Worst in-band match is ${last.m.worst.toFixed(1)} dB.` : ''} I can adjust the design until it meets the goal, or you can drag the sliders yourself.</p>
-            <div className="row-btns"><button className="btn sig" onClick={s.tune}>Tune to goal</button></div>
+            <p className="tight">{s.kind === 'array' && last?.am ? `Worst active match over ±${SCAN_MAX}° is ${last.am.activeWorst.toFixed(1)} dB.` : last ? `Worst in-band match is ${last.m.worst.toFixed(1)} dB.` : ''} I can adjust the design until it meets the goal, or you can drag the sliders yourself.</p>
+            <div className="row-btns"><button className="btn sig" onClick={s.tune}>{s.kind === 'array' ? 'Optimise it' : 'Tune to goal'}</button></div>
           </>
         )}
       </div>
@@ -274,7 +321,7 @@ function S11Card({ t, height }: { t: number; height: number }) {
     const n = Math.floor(reveal * FREQS.length)
     if (n > 1) series.push({ x: FREQS.slice(0, n), y: c.slice(0, n), color: 'var(--sig)', width: 2.4, dot: reveal < 1 })
   } else if (last) {
-    s.runs.slice(0, -1).forEach((r) => series.push({ x: FREQS, y: curve(r.d), color: '#bdb6a6', width: 1.2 }))
+    s.runs.slice(0, -1).forEach((r) => series.push({ x: FREQS, y: curve(r.d), color: 'var(--faint)', width: 1.2 }))
     const to = curve(last.d)
     const k = clamp01((t - s.shown.at) / 0.8)
     const kk = k < 0.5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2
@@ -325,6 +372,7 @@ function RunsCard() {
 function ResultsPane({ t }: { t: number }) {
   const s = useDemo()
   const showPlan = s.phase === 'solving' && s.solveKind === 'first' || (s.runs.length === 1 && s.phase === 'solved' && t - s.phaseAt < 1.5)
+  if (s.kind === 'array' && s.runs.length && !showPlan) return <ArrayResults top={<TuneCard t={t} />} />
   return (
     <div className="pane-grid results">
       <div className="stack">
@@ -351,9 +399,12 @@ function Center({ t }: { t: number }) {
     <main className="col center">
       {(s.pdf || s.phase !== 'empty') && <Tabs />}
       <div className="pane-host">
+        <RunControl variant="float" />
         {!s.pdf && s.phase === 'empty' && <DropZone />}
-        {s.pdf && s.tab === 'paper' && <PaperView data={s.pdf.data} name={s.pdf.name} t={paperT} reading={s.phase === 'reading'} onInfo={(pages, known) => useDemo.setState((st) => ({ pdf: st.pdf && { ...st.pdf, pages, known } }))} />}
+        {s.pdf && s.tab === 'paper' && <PaperView data={s.pdf.data} name={s.pdf.name} t={paperT} reading={s.phase === 'reading'} onInfo={(pages, known, paper) => useDemo.setState((st) => ({ pdf: st.pdf && { ...st.pdf, pages, known, paper } }))} />}
         {s.tab === 'model' && s.phase !== 'empty' && <ModelPane t={t} />}
+        {s.tab === 'summary' && s.runs.length > 0 && <SummaryPane />}
+        {s.tab === 'compare' && <ComparePane />}
         {s.tab === 'results' && <ResultsPane t={t} />}
         {s.tab === 'explore' && s.runs.length > 0 && <ExplorePane />}
         {s.pdf && s.phase === 'empty' && s.tab === 'paper' && <div className="paper-prompt">Attached. Tell me what you want from it →</div>}
@@ -363,6 +414,15 @@ function Center({ t }: { t: number }) {
 }
 
 // ---------------------------------------------------------------- chat
+
+const ARRAY_QUESTIONS = [
+  'Where does the beam really point when I steer to 42°?',
+  'What happens if two elements fail?',
+  'How many phase-shifter bits do I need?',
+  'What spacing would let it steer to 60°?',
+  'Does beam squint matter here?',
+  'What was wrong with the paper?',
+]
 
 const QUESTIONS = [
   'Why did it keep moving the inset every time it changed the length?',
@@ -374,6 +434,14 @@ const QUESTIONS = [
 ]
 
 function suggestion(s: ReturnType<typeof useDemo.getState>) {
+  if (s.kind === 'array' || (s.phase === 'empty' && s.pdf?.paper === 'array')) {
+    if (s.phase === 'empty') return 'Build the array in this paper and check it really steers to ±42° on its 20 MHz channel.'
+    if (s.phase === 'built') return 'Solve it.'
+    if (s.phase === 'solved') return 'Optimise it so it stays matched with low sidelobes out to ±42°.'
+    if (s.phase === 'done') { const asked = new Set(s.msgs.filter((m) => m.who === 'user').map((m) => m.text)); return ARRAY_QUESTIONS.find((q) => !asked.has(q)) ?? '' }
+    return ''
+  }
+  if (s.screen === 'modeler' && s.phase === 'empty') return useModel.getState().objs.length ? 'Solve it.' : 'Insert a 2.4 GHz patch antenna.'
   if (s.phase === 'empty') return s.pdf ? 'Build the antenna in this paper on real FR-4 and tune it to cover 2.40 to 2.48 GHz.' : 'Build a 2.4 GHz inset-fed patch on 1.6 mm FR-4 that covers 2.40 to 2.48 GHz.'
   if (s.phase === 'built') return 'Solve it.'
   if (s.phase === 'solved') return 'Tune it until the whole band is under −10 dB.'
@@ -424,13 +492,15 @@ function Chat({ t }: { t: number }) {
     if (e.key === 'Tab' && ghost && !s.draft) { e.preventDefault(); auto.current = { text: ghost, start: now() } }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); auto.current = null; s.send(s.draft) }
   }
-  useEffect(() => { ta.current?.focus() }, [])
+  // in the modeler the keyboard belongs to the drawing tools (B, R, Esc…), so the chat doesn't grab focus there
+  useEffect(() => { if (useDemo.getState().screen !== 'modeler') ta.current?.focus() }, [])
   const visible = s.msgs.filter((m) => m.at <= t)
   return (
     <aside className="col right">
       <div className="chat-h"><h4>Solver</h4><span>ask it anything about the design</span></div>
       <div className="thread">
-        {visible.length === 0 && <div className="empty-chat">Drop in a paper or describe a structure. I'll build the model, pick how to solve it, and tune it to your spec. Ask me why anything happens.</div>}
+        {visible.length === 0 && s.screen === 'modeler' && <div className="empty-chat">Draw the model with the tools on the left, or ask me to insert a patch antenna. When it's ready, say "solve".</div>}
+        {visible.length === 0 && s.screen !== 'modeler' && <div className="empty-chat">Drop in a paper or describe a structure. I'll build the model, pick how to solve it, and tune it to your spec. Ask me why anything happens.</div>}
         {visible.map((m) => <Message key={m.id} m={m} t={t} />)}
       </div>
       <div className="composer">
@@ -455,6 +525,9 @@ function Chat({ t }: { t: number }) {
 export default function Demo() {
   const t = useClock()
   const attach = useDemo((s) => s.attach)
+  const screen = useDemo((s) => s.screen)
+  // the design sidebar only makes sense once there's a design: after the paper is read and the model is built
+  const scanned = useDemo((s) => s.phase !== 'empty' && !(s.phase === 'reading' && t - s.phaseAt < readDur(s.source)))
   const [over, setOver] = useState(false)
   useEffect(() => {
     const dragover = (e: DragEvent) => { e.preventDefault(); setOver(true) }
@@ -462,7 +535,7 @@ export default function Demo() {
     const drop = (e: DragEvent) => {
       e.preventDefault(); setOver(false)
       const f = [...(e.dataTransfer?.files ?? [])].find((x) => x.type === 'application/pdf' || x.name.toLowerCase().endsWith('.pdf'))
-      if (f && useDemo.getState().phase === 'empty') attach(f)
+      if (f && useDemo.getState().phase === 'empty') { void attach(f); useDemo.getState().setScreen('flow') }
     }
     window.addEventListener('dragover', dragover); window.addEventListener('dragleave', leave); window.addEventListener('drop', drop)
     return () => { window.removeEventListener('dragover', dragover); window.removeEventListener('dragleave', leave); window.removeEventListener('drop', drop) }
@@ -470,11 +543,14 @@ export default function Demo() {
   return (
     <div className="stage">
       <TopBar t={t} />
-      <div className="body">
-        <SpecSheet t={t} />
-        <Center t={t} />
-        <Chat t={t} />
-      </div>
+      <MenuBar />
+      {screen === 'home' ? <Home /> : screen === 'modeler' ? <Modeler right={<Chat t={t} />} /> : (
+        <div className={`body${scanned ? '' : ' no-side'}`}>
+          {scanned && <SpecSheet t={t} />}
+          <Center t={t} />
+          <Chat t={t} />
+        </div>
+      )}
       {over && <div className="dropping"><div>Drop the PDF</div></div>}
     </div>
   )

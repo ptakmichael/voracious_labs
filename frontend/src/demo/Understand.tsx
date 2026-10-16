@@ -1,19 +1,21 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { LineChart } from '../components/charts/LineChart'
-import { Contour, CONTOUR_LEGEND } from './Contour'
+import { Contour, CONTOUR_LEGEND, contourRamp } from './Contour'
+import { useTheme } from './theme'
 import {
   type BaseKey, type Metric, type Param, BASE_KEYS, METRIC_EXAMPLES, PARAM_EXAMPLES, CURVES, METRIC_SCALARS, STEP,
   effectRow, fmtSigned, makeMetric, makeParam, s11At, sweepParam,
 } from './effects'
 import { ExprError } from './expr'
-import { type Design, VARS, excitation, metrics, zin } from './model'
+import { type Design, VARS, excitation, metrics } from './model'
 import { FIELD_COLORS, type FieldKind, THICK, phaseLabel } from './fieldsConst'
 import { SmithPane } from './SmithPane'
 import { SolveReport } from './SolveReport'
-import { Workspace, layoutFrom, useSize } from './Workspace'
+import { Workspace, layoutFrom, useSize, useWS } from './Workspace'
+import { ArrayDesignerPane, ScanPane, UVPane } from './ArrayTools'
 import { FreqScrubber } from './Scrubber'
 import { RunTree } from './RunTree'
-import { allMetrics, allParams, now, useDemo } from './store'
+import { allMetrics, allParams, useDemo } from './store'
 import type { DimInfo } from './EffectScene'
 
 const EffectScene = lazy(() => import('./EffectScene').then((m) => ({ default: m.EffectScene })))
@@ -138,87 +140,6 @@ function EffectsPane({ onBuild }: { onBuild: (k: 'param' | 'metric') => void }) 
   )
 }
 
-/** Side view of the patch through one cycle: charge at the ends, current through the middle, energy trading places. */
-function ChargePane() {
-  const s = useDemo()
-  const d = s.design
-  const f = s.fq ?? Math.round(metrics(d).f0 * 1000) / 1000
-  const [playing, setPlaying] = useState(true)
-  const [ph, setPh] = useState(0)
-  const [ref, size] = useSize<HTMLDivElement>()
-  useEffect(() => {
-    if (!playing) return
-    let raf = 0, last = now()
-    const loop = () => { const n = now(); setPh((p) => (p + (n - last) * 1.6) % (2 * Math.PI)); last = n; raf = requestAnimationFrame(loop) }
-    raf = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(raf)
-  }, [playing])
-  const f0 = metrics(d).f0, z = zin(f, d), ex = excitation(f, d)
-  const ce = Math.cos(ph), cj = Math.sin(ph)
-  const look = Math.abs(z.x) < 4 ? 'resistive' : z.x > 0 ? 'inductive' : 'capacitive'
-  const W = Math.max(320, Math.min(size.w - 24, 760)), Hh = 190
-  const x0 = 70, x1 = W - 70, zg = 150, zp = 92 // ground and patch heights in the drawing
-  const X = (u: number) => x0 + (x1 - x0) * u
-  const eArrows = [0.04, 0.13, 0.24, 0.76, 0.87, 0.96]
-  const charges = (u0: number, sign: number) => Array.from({ length: 5 }, (_, i) => ({ x: X(u0 + (u0 < 0.5 ? 1 : -1) * i * 0.035), sign }))
-  return (
-    <div className="pane lcp" ref={ref}>
-      <div className="lcp-top">
-        <button className="btn play" onClick={() => setPlaying(!playing)} aria-label={playing ? 'Pause' : 'Play'}>{playing ? '❚❚' : '▶'}</button>
-        {!playing && <input type="range" min={0} max={6.283} step={0.01} value={ph} onChange={(e) => setPh(parseFloat(e.target.value))} style={{ width: 160 }} />}
-        <span className="mono small mute">side view, one cycle{playing ? ' (slowed down a billion times)' : ''}</span>
-      </div>
-      <svg width={W} height={Hh} className="lcp-svg" onClick={() => setPlaying(!playing)} style={{ cursor: 'pointer' }}>
-        <defs>
-          <marker id="lcE" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#2c4a72" /></marker>
-          <marker id="lcJ" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="#cf4520" /></marker>
-        </defs>
-        <rect x={20} y={zp} width={W - 40} height={zg - zp} fill="#dfe3cf" />
-        <line x1={20} x2={W - 20} y1={zg} y2={zg} stroke="#b07436" strokeWidth={5} />
-        <text x={24} y={zg + 18} fontSize={11} fill="var(--mute)">ground plane</text>
-        <text x={W - 24} y={zg - 8} fontSize={11} fill="var(--mute)" textAnchor="end">board</text>
-        <line x1={x0} x2={x1} y1={zp} y2={zp} stroke="#b07436" strokeWidth={6} />
-        <text x={(x0 + x1) / 2} y={zp - 48} fontSize={11} fill="var(--mute)" textAnchor="middle">patch, seen from the side · charge marks show + and − at the two ends</text>
-        {eArrows.map((u) => {
-          const v = Math.cos(Math.PI * u) * ce
-          if (Math.abs(v) < 0.08) return null
-          const x = X(u), dn = v > 0
-          return <line key={u} x1={x} x2={x} y1={dn ? zp + 6 : zg - 6} y2={dn ? zg - 6 : zp + 6} stroke="#2c4a72" strokeWidth={1 + 2.2 * Math.abs(v)} opacity={0.25 + 0.75 * Math.abs(v)} markerEnd="url(#lcE)" />
-        })}
-        {[[x0, -1], [x1, 1]].map(([xe, sg]) => [16, 30].map((r) => {
-          const v = (sg < 0 ? 1 : -1) * ce
-          return <path key={`${xe}${r}`} d={`M${xe},${zp} C${xe + sg * r},${zp - r * 0.7} ${xe + sg * r * 1.3},${zg - 4} ${xe + sg * r * 0.6},${zg}`} fill="none" stroke="#2c4a72" strokeWidth={1.4} strokeDasharray="4 3" opacity={0.15 + 0.7 * Math.abs(v)} markerEnd={v > 0 ? 'url(#lcE)' : undefined} markerStart={v < 0 ? 'url(#lcE)' : undefined} />
-        }))}
-        {[...charges(0.02, 1), ...charges(0.98, -1)].map((q, i) => {
-          const sign = q.sign * Math.sign(ce)
-          return <text key={i} x={q.x} y={zp - 8} fontSize={19} fontWeight={700} textAnchor="middle" fill={sign > 0 ? '#cf4520' : '#2c4a72'} opacity={0.15 + 0.85 * Math.abs(ce)}>{sign > 0 ? '+' : '−'}</text>
-        })}
-        {Math.abs(cj) > 0.06 && (
-          <line x1={cj > 0 ? X(0.3) : X(0.7)} x2={cj > 0 ? X(0.7) : X(0.3)} y1={zp - 14} y2={zp - 14} stroke="#cf4520" strokeWidth={2 + 4 * Math.abs(cj)} opacity={0.3 + 0.7 * Math.abs(cj)} markerEnd="url(#lcJ)" />
-        )}
-        {Math.abs(cj) > 0.06 && <text x={X(0.5)} y={zp - 24} fontSize={11.5} textAnchor="middle" fill="#cf4520" opacity={0.4 + 0.6 * Math.abs(cj)}>current</text>}
-        <text x={X(0.12)} y={zg + 30} fontSize={11.5} textAnchor="middle" fill="#2c4a72" opacity={0.35 + 0.65 * Math.abs(ce)}>electric field</text>
-        <text x={X(0.88)} y={zg + 30} fontSize={11.5} textAnchor="middle" fill="#2c4a72" opacity={0.35 + 0.65 * Math.abs(ce)}>electric field</text>
-      </svg>
-      <div className="lcp-energy-h">where the energy is right now <span>· moves with the animation, swaps twice a cycle · click to {playing ? 'pause' : 'play'}</span></div>
-      <div className="lcp-energy" onClick={() => setPlaying(!playing)} style={{ cursor: 'pointer' }}>
-        <span>energy in the ends (electric, like a capacitor)</span><div className="track"><div className="fill" style={{ width: `${ce * ce * 100}%`, background: '#2c4a72' }} /></div>
-        <span>energy in the middle (magnetic, like an inductor)</span><div className="track"><div className="fill" style={{ width: `${cj * cj * 100}%`, background: '#cf4520' }} /></div>
-      </div>
-      <ol className="lcp-text">
-        <li><b className="cap">The ends hold charge.</b> One end goes +, the other −. The electric field between patch and ground there stores energy, like a capacitor.</li>
-        <li><b className="ind">The middle carries current.</b> That charge flows through the middle to the other end, and the magnetic field around it stores energy, like an inductor.</li>
-        <li><b>Resonance is the rhythm of that hand-off</b>: {f0.toFixed(3)} GHz for this patch. A longer patch means a longer trip, so a lower frequency. That's why patch length moves resonance so much.</li>
-      </ol>
-      <div className={`fp-read ${look}`}>
-        <div>At <b>{f.toFixed(2)} GHz</b> the input looks <b>{look}</b> ({z.r.toFixed(0)} {z.x >= 0 ? '+' : '−'} j{Math.abs(z.x).toFixed(0)} Ω)</div>
-        <small>{f < f0 - 0.005 ? 'below resonance the current (inductor) side wins' : f > f0 + 0.005 ? 'above resonance the charge (capacitor) side wins' : 'at resonance the two cancel and only resistance is left'} · the patch is {Math.round(ex * 100)}% excited here</small>
-      </div>
-      <FreqScrubber d={d} f={f} onF={s.setFq} />
-    </div>
-  )
-}
-
 const FIELD_TEXT: Record<FieldKind, [string, string]> = {
   E: ['Electric field E', 'Between patch and ground. Strongest at the two ends, pointing opposite ways, zero in the middle. It bulges out past the ends; that bulge is what radiates.'],
   H: ['Magnetic field H', 'Wraps around the current, across the width. Strongest in the middle, zero at the ends. A quarter cycle behind E.'],
@@ -270,9 +191,10 @@ function FieldsPane() {
           {show.map((k) => (
             <div key={k} className="fk-note"><b style={{ color: FIELD_COLORS[k] }}>{FIELD_TEXT[k][0]}</b><p>{FIELD_TEXT[k][1]}</p></div>
           ))}
-          <p className="fk-foot">{style === 'vectors' ? 'Arrow length is field strength at that point, right now in the cycle.' : 'Dashes move the way the field points; lines fade as that field passes through zero.'} Frequency follows the slider in Charge &amp; current. Away from resonance everything shrinks.</p>
+          <p className="fk-foot">{style === 'vectors' ? 'Arrow length is field strength at that point, right now in the cycle.' : 'Dashes move the way the field points; lines fade as that field passes through zero.'} Away from resonance everything shrinks.</p>
         </div>
       </div>
+      <FreqScrubber d={d} f={f} onF={s.setFq} />
     </div>
   )
 }
@@ -448,6 +370,7 @@ function ParamBuilder({ onClose }: { onClose: () => void }) {
 
 function ContourPane() {
   const s = useDemo()
+  const dark = useTheme((t) => t.dark)
   const [ref, size] = useSize<HTMLDivElement>()
   const path = s.runs.filter((r) => r.d.W === s.design.W && r.d.h === s.design.h && r.d.er === s.design.er && r.d.gs === s.design.gs).map((r) => r.d)
   return (
@@ -457,7 +380,7 @@ function ContourPane() {
         <Contour d={s.design} path={path} onPick={(L, y0) => s.setDesign({ L, y0 })} height={Math.max(220, size.h - 110)} />
         <div className="legend">
           <span>dB</span>
-          {CONTOUR_LEGEND.LEVELS.map((l, i) => <span key={l} className="sw"><i style={{ background: CONTOUR_LEGEND.RAMP[i] }} />{l}</span>)}
+          {CONTOUR_LEGEND.LEVELS.map((l, i) => <span key={l} className="sw"><i style={{ background: contourRamp(dark)[i] }} />{l}</span>)}
           <span className="sw"><i style={{ background: 'var(--sig)', height: 2 }} />goal</span>
         </div>
         <div className="explain small">Narrow in length, wide in inset: length sets the frequency, inset only the match. Dots are the runs.</div>
@@ -466,29 +389,39 @@ function ContourPane() {
   )
 }
 
+// one full-size window with every view as a tab; drag a tab out to see two side by side
 const DEFAULT_LAYOUT = () => layoutFrom([
-  { panes: ['effects', 'fields', 'charge'], x: 0, y: 0, w: 0.6, h: 0.6 },
-  { panes: ['smith'], x: 0.6, y: 0, w: 0.4, h: 0.6 },
-  { panes: ['matrix', 'drill'], x: 0, y: 0.6, w: 0.55, h: 0.4 },
-  { panes: ['tree', 'contour'], x: 0.55, y: 0.6, w: 0.45, h: 0.4 },
+  { panes: ['effects', 'smith', 'fields', 'matrix', 'drill', 'tree', 'contour', 'method'], x: 0, y: 0, w: 1, h: 1 },
 ])
+// the array opens on its own tools; the element-level views are still there for the unit cell
+const ARRAY_LAYOUT = () => layoutFrom([
+  { panes: ['designer', 'uv', 'scan', 'smith', 'effects', 'fields', 'method'], x: 0, y: 0, w: 1, h: 1 },
+])
+
+let layoutKind: string | null = null
 
 export function ExplorePane() {
   const [build, setBuild] = useState<'param' | 'metric' | null>(null)
+  const kind = useDemo((x) => x.kind)
+  const layout = kind === 'array' ? ARRAY_LAYOUT : DEFAULT_LAYOUT
+  // switch to the right default windows when the kind of design changes (even if Explore wasn't open at the time)
+  useEffect(() => { if (layoutKind !== kind) { const had = layoutKind !== null; layoutKind = kind; if (had || useWS.getState().wins.length) useWS.getState().set(layout()) } }, [kind]) // eslint-disable-line react-hooks/exhaustive-deps
   const panes = {
     effects: { title: 'Effects on geometry', render: () => <EffectsPane onBuild={setBuild} /> },
     fields: { title: 'Fields: E, H, J, S', render: () => <FieldsPane /> },
-    charge: { title: 'Charge & current', render: () => <ChargePane /> },
     smith: { title: 'Smith chart', render: () => <SmithPane /> },
     matrix: { title: 'What moves what', render: () => <Matrix onBuild={setBuild} /> },
     drill: { title: 'Drill-down', render: () => <Drill /> },
     tree: { title: 'How it got here', render: () => <RunTree /> },
     contour: { title: 'Where the good designs are', render: () => <ContourPane /> },
     method: { title: 'How it was solved', render: () => <SolveReport framed={false} /> },
+    designer: { title: 'Array designer', render: () => <ArrayDesignerPane /> },
+    uv: { title: 'u-v space', render: () => <UVPane /> },
+    scan: { title: 'Scan performance', render: () => <ScanPane /> },
   }
   return (
     <div className="pane-fill">
-      <Workspace panes={panes} initial={DEFAULT_LAYOUT} />
+      <Workspace panes={panes} initial={layout} />
       {build && (
         <div className="b-scrim" onClick={(e) => { if (e.target === e.currentTarget) setBuild(null) }}>
           {build === 'metric' ? <MetricBuilder onClose={() => setBuild(null)} /> : <ParamBuilder onClose={() => setBuild(null)} />}

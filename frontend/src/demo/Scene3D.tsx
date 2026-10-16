@@ -3,10 +3,10 @@ import { Canvas } from '@react-three/fiber'
 import { type ReactNode, useMemo } from 'react'
 import * as THREE from 'three'
 import { FEED_W, SUBSTRATE, type Design } from './model'
+import { ink3d, useTheme } from './theme'
 
 THREE.Object3D.DEFAULT_UP.set(0, 0, 1)
 
-const INK = '#1c1b18'
 const COPPER = '#c07a36'
 const SUB = '#a9b48f'
 const SIG = '#cf4520'
@@ -71,6 +71,7 @@ export function frame(d: Design) {
 export interface SceneProps { d: Design; bt: number; current: number; pulse: number; labels: boolean; fixes: boolean; ghost?: boolean }
 
 function Model({ d, bt, current, pulse, labels, fixes, ghost }: SceneProps) {
+  const INK = ink3d(useTheme((s) => s.dark))
   const cu = ghost ? 0.28 : 1, di = ghost ? 0.25 : 1
   const tex = useCurrentTexture()
   const geo = usePatchGeometry(d.L, d.W, d.y0)

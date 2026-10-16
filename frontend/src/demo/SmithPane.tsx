@@ -118,16 +118,16 @@ export function SmithPane() {
               {PARAM_COLORS.map((c, i) => <marker key={i} id={`sa${i}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill={c} /></marker>)}
             </defs>
             <g clipPath="url(#sm-view)">
-              <circle cx={cx} cy={cy} r={R} fill="#fffdf8" stroke="var(--ink)" strokeWidth={1.2} />
+              <circle cx={cx} cy={cy} r={R} fill="var(--field)" stroke="var(--ink)" strokeWidth={1.2} />
               <g clipPath="url(#sm-unit)" fill="none">
                 <rect x={cx - R} y={cy - R} width={2 * R} height={R} fill="rgba(207,69,32,.035)" />
                 <rect x={cx - R} y={cy} width={2 * R} height={R} fill="rgba(44,74,114,.035)" />
-                <g stroke="#e1dbcd">
+                <g stroke="var(--c-grid)">
                   {R_CIRCLES.map((r) => <circle key={r} cx={cx + (r / (1 + r)) * R} cy={cy} r={R / (1 + r)} />)}
                   {X_ARCS.map((x) => <g key={x}><circle cx={cx + R} cy={cy - R / x} r={R / x} /><circle cx={cx + R} cy={cy + R / x} r={R / x} /></g>)}
                   <line x1={cx - R} x2={cx + R} y1={cy} y2={cy} />
                 </g>
-                {showVswr && VSWR_CIRCLES.map((v) => { const g = (v - 1) / (v + 1); return <g key={v}><circle cx={cx} cy={cy} r={g * R} stroke="#9c968a" strokeDasharray="1 3" /><text x={cx - g * R * 0.707 - 3} y={cy + g * R * 0.707 + 10} fontSize={9.5} fill="var(--mute)" textAnchor="end">VSWR {v}</text></g> })}
+                {showVswr && VSWR_CIRCLES.map((v) => { const g = (v - 1) / (v + 1); return <g key={v}><circle cx={cx} cy={cy} r={g * R} stroke="var(--faint)" strokeDasharray="1 3" /><text x={cx - g * R * 0.707 - 3} y={cy + g * R * 0.707 + 10} fontSize={9.5} fill="var(--mute)" textAnchor="end">VSWR {v}</text></g> })}
               </g>
               {showVals && R_CIRCLES.map((r) => <text key={r} x={cx + ((r - 1) / (r + 1)) * R + 3} y={cy + 11} fontSize={9.5} fill="var(--faint)">{(r * 50).toFixed(0)}</text>)}
               {showVals && X_ARCS.map((x) => [1, -1].map((sg) => {
@@ -141,7 +141,7 @@ export function SmithPane() {
               <path d={path(loop)} fill="none" stroke="var(--ink)" strokeWidth={1.7} />
               <path d={path(band)} fill="none" stroke="var(--ok)" strokeWidth={4.5} strokeLinecap="round" />
               {ticks.map(({ t, g }) => { const [x, y] = P(g); return <g key={t}><circle cx={x} cy={y} r={2.6} fill="var(--ink)" /><text x={x + 5} y={y - 5} fontSize={10} fill="var(--ink-2)">{t.toFixed(1)}</text></g> })}
-              {ghostTicks.map((g, i) => { const [x, y] = P(g); return <circle key={i} cx={x} cy={y} r={2.4} fill="#fffdf8" stroke={col} strokeWidth={1.3} /> })}
+              {ghostTicks.map((g, i) => { const [x, y] = P(g); return <circle key={i} cx={x} cy={y} r={2.4} fill="var(--field)" stroke={col} strokeWidth={1.3} /> })}
               {(() => {
                 const [x1, y1] = P(from), [x2, y2] = P(to)
                 const len = Math.hypot(x2 - x1, y2 - y1)
@@ -149,14 +149,14 @@ export function SmithPane() {
                 return (
                   <g pointerEvents="none">
                     {len > 4 && <line x1={x1 + ux * 6} y1={y1 + uy * 6} x2={x2 - ux * 5} y2={y2 - uy * 5} stroke={col} strokeWidth={2.4} markerEnd={`url(#sa${pi % PARAM_COLORS.length})`} />}
-                    <circle cx={x1} cy={y1} r={5} fill="#fffdf8" stroke={col} strokeWidth={2} />
-                    <circle cx={x2} cy={y2} r={5} fill={col} stroke="#fff" strokeWidth={1.5} />
+                    <circle cx={x1} cy={y1} r={5} fill="var(--field)" stroke={col} strokeWidth={2} />
+                    <circle cx={x2} cy={y2} r={5} fill={col} stroke="var(--sheet)" strokeWidth={1.5} />
                     <text x={x2 + (ux >= 0 ? 9 : -9)} y={y2 + 14} fontSize={10.5} fontWeight={600} fill={col} textAnchor={ux >= 0 ? 'start' : 'end'}>{fa.toFixed(3)} GHz after</text>
                   </g>
                 )
               })()}
               <circle cx={cx} cy={cy} r={3.5} fill="var(--ink)" />
-              <circle cx={P(at)[0]} cy={P(at)[1]} r={7} fill="var(--sig)" stroke="#fff" strokeWidth={2} />
+              <circle cx={P(at)[0]} cy={P(at)[1]} r={7} fill="var(--sig)" stroke="var(--sheet)" strokeWidth={2} />
               <text x={P(at)[0] + 10} y={P(at)[1] + 4} fontSize={11} fontWeight={600} fill="var(--sig)">{f.toFixed(3)} GHz</text>
               {hv && (() => {
                 const [x, y] = P(hv.g), right = x < side - 210
@@ -165,9 +165,9 @@ export function SmithPane() {
                     <circle cx={x} cy={y} r={6} fill="none" stroke="var(--ink)" strokeWidth={1.5} />
                     <g transform={`translate(${right ? x + 12 : x - 202} ${Math.max(8, Math.min(side - 62, y - 30))})`}>
                       <rect width={192} height={54} fill="var(--ink)" />
-                      <text x={8} y={16} fontSize={11} fill="#fff" fontWeight={600}>{hv.f.toFixed(3)} GHz{hv.f >= GOAL.f1 && hv.f <= GOAL.f2 ? '  · in band' : ''}</text>
-                      <text x={8} y={31} fontSize={10.5} fill="#e8e3d8">{zfmt(hv.g.z)}</text>
-                      <text x={8} y={46} fontSize={10.5} fill="#e8e3d8">S11 {s11(hv.f, d).toFixed(1)} dB · click to select</text>
+                      <text x={8} y={16} fontSize={11} fill="var(--sheet)" fontWeight={600}>{hv.f.toFixed(3)} GHz{hv.f >= GOAL.f1 && hv.f <= GOAL.f2 ? '  · in band' : ''}</text>
+                      <text x={8} y={31} fontSize={10.5} fill="var(--sheet)">{zfmt(hv.g.z)}</text>
+                      <text x={8} y={46} fontSize={10.5} fill="var(--sheet)">S11 {s11(hv.f, d).toFixed(1)} dB · click to select</text>
                     </g>
                   </g>
                 )
@@ -184,8 +184,8 @@ export function SmithPane() {
             <LegendRow label="−10 dB circle: inside it, the goal is met"><circle cx={17} cy={7} r={6} fill="rgba(47,106,76,.12)" stroke="var(--ok)" strokeDasharray="3 2" /></LegendRow>
             <LegendRow label={<>selected frequency, <b>{f.toFixed(3)} GHz</b></>}><circle cx={17} cy={7} r={5} fill="var(--sig)" /></LegendRow>
             <LegendRow label="centre: 50 Ω, a perfect match"><circle cx={17} cy={7} r={3} fill="var(--ink)" /></LegendRow>
-            <LegendRow label={<>{p.name.toLowerCase()} {pct(k)}: the what-if curve (hollow dots every 0.1 GHz)</>}><line x1={2} x2={32} y1={7} y2={7} stroke={col} strokeWidth={1.8} strokeDasharray="6 4" /><circle cx={17} cy={7} r={2.4} fill="#fffdf8" stroke={col} strokeWidth={1.3} /></LegendRow>
-            <LegendRow label={<>{hover !== null ? 'hovered' : 'selected'} frequency: now (hollow) → after the change (filled)</>}><circle cx={4} cy={7} r={3} fill="#fffdf8" stroke={col} strokeWidth={1.5} /><line x1={8} x2={26} y1={7} y2={7} stroke={col} strokeWidth={2} markerEnd={`url(#sa${pi % PARAM_COLORS.length})`} /><circle cx={30} cy={7} r={3} fill={col} /></LegendRow>
+            <LegendRow label={<>{p.name.toLowerCase()} {pct(k)}: the what-if curve (hollow dots every 0.1 GHz)</>}><line x1={2} x2={32} y1={7} y2={7} stroke={col} strokeWidth={1.8} strokeDasharray="6 4" /><circle cx={17} cy={7} r={2.4} fill="var(--field)" stroke={col} strokeWidth={1.3} /></LegendRow>
+            <LegendRow label={<>{hover !== null ? 'hovered' : 'selected'} frequency: now (hollow) → after the change (filled)</>}><circle cx={4} cy={7} r={3} fill="var(--field)" stroke={col} strokeWidth={1.5} /><line x1={8} x2={26} y1={7} y2={7} stroke={col} strokeWidth={2} markerEnd={`url(#sa${pi % PARAM_COLORS.length})`} /><circle cx={30} cy={7} r={3} fill={col} /></LegendRow>
             <div className="lg-note">Grid: circles are constant resistance, arcs constant reactance (values in Ω). Top half inductive, bottom half capacitive.</div>
           </div>
           <div className="sm-read">

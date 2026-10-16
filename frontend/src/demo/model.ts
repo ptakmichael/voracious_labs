@@ -15,7 +15,9 @@ export interface Design {
   gs: number // ground-plane scale (1 = paper size)
 }
 
-export const GOAL = { f1: 2.4, f2: 2.48, db: -10 }
+/** The band the design has to cover. Mutable: the phased-array demo narrows it to a 20 MHz channel. */
+export const GOAL = { f1: 2.4, f2: 2.48, db: -10, label: 'Wi-Fi / BLE' }
+export function setGoal(f1: number, f2: number, label: string) { GOAL.f1 = f1; GOAL.f2 = f2; GOAL.label = label }
 export const F_RANGE: [number, number] = [2.1, 2.8]
 export const FEED_W = 2.9 // 50 Ω line on 1.5 mm FR-4
 

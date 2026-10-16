@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { LineChart } from '../components/charts/LineChart'
 import { FEED_W, SUBSTRATE } from './model'
 import { useDemo } from './store'
+import { arrayDecisions, patchDecisions } from './decisions'
+import { F0, SCAN_MAX, lambda } from './arrayModel'
 
 /**
  * What the solver did on the first solve and why, kept on screen after it finishes: the method and what it ruled
@@ -18,7 +20,7 @@ const PASSES = [
 ]
 const TIME = [['Geometry and first mesh', 9], ['6 adaptive mesh passes', 51], ['Fast sweep, 281 points', 24], ['Fields and far-field', 10]] as const
 
-type Tab = 'solver' | 'setup' | 'mesh' | 'speed' | 'steps'
+type Tab = 'why' | 'solver' | 'setup' | 'mesh' | 'speed' | 'steps'
 
 function Row({ k, v, why }: { k: string; v: React.ReactNode; why?: React.ReactNode }) {
   return (
@@ -31,7 +33,7 @@ function Row({ k, v, why }: { k: string; v: React.ReactNode; why?: React.ReactNo
 
 export function SolveReport({ framed = true }: { framed?: boolean }) {
   const s = useDemo()
-  const [tab, setTab] = useState<Tab>('solver')
+  const [tab, setTab] = useState<Tab>('why')
   const first = s.runs[0]
   if (!first) return null
   const d = first.d
@@ -43,12 +45,60 @@ export function SolveReport({ framed = true }: { framed?: boolean }) {
   const body = (
     <>
       <div className="sr-tabs">
-        {([['solver', 'Solver'], ['setup', 'Setup & boundaries'], ['mesh', 'Mesh'], ['speed', 'Speed-ups'], ['steps', 'Steps']] as [Tab, string][]).map(([k, n]) => (
+        {(([['why', 'Why these choices'], ['solver', 'Solver'], ['setup', 'Setup & boundaries'], ['mesh', 'Mesh'], ['speed', 'Speed-ups'], ['steps', 'Steps']] as [Tab, string][]).filter(([k]) => s.kind !== 'array' || k !== 'mesh')).map(([k, n]) => (
           <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{n}</button>
         ))}
       </div>
       <div className="sr-body">
-        {tab === 'solver' && (
+        {tab === 'why' && (
+          <>
+            <p className="sr-p">Every choice below follows from something measurable in {s.kind === 'array' ? 'the array' : 'the geometry'}. Read across: what I saw → what it means → what I chose.</p>
+            <div className="why-tbl">
+              {(s.kind === 'array' ? arrayDecisions(d, first.a) : patchDecisions(d)).map((r, i) => (
+                <div key={i} className="why-row">
+                  <span className={`why-tag ${r.area.toLowerCase()}`}>{r.area}</span>
+                  <div className="why-saw">{r.saw}</div>
+                  <div className="why-means">→ {r.means}</div>
+                  <div className="why-chose"><b>→ {r.chose}</b>{r.not && <span className="why-not">instead of {r.not[0].toLowerCase() + r.not.slice(1)}</span>}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+        {s.kind === 'array' && tab === 'solver' && (
+          <>
+            <div className="sr-pick">
+              <div className="sr-pick-h">Unit cell with periodic boundaries, then a finite-array check</div>
+              <div className="sr-pick-s">frequency-domain FEM · Floquet ports · scan sweep 0–{SCAN_MAX}° · 4×4 domain decomposition</div>
+              <p>One element is solved with periodic walls, which makes it behave like the middle of an infinite array; steering is a phase shift between the walls. Then the full 4×4 is solved once to catch the edge elements.</p>
+            </div>
+            <div className="sr-h">Ruled out</div>
+            <ul className="sr-list no">
+              <li><b>Full 4×4 solve for every change.</b> Sixteen times the unknowns for each tuning step, when the edge correction is small and stable.</li>
+              <li><b>Isolated-element S11, as in the paper.</b> At {(first.a!.dx / lambda(F0)).toFixed(2)} λ spacing the match changes as the beam steers; only the active S11 shows it.</li>
+            </ul>
+          </>
+        )}
+        {s.kind === 'array' && tab === 'setup' && (
+          <>
+            <Row k="Unit cell" v={<>{first.a!.dx} × {first.a!.dy} mm, periodic (master/slave) walls with a phase shift for each scan angle</>} why="Stands in for an element with neighbours on every side." />
+            <Row k="Floquet port" v="above the cell, 2 modes (TE00, TM00), de-embedded to the patch" why="Gives the active reflection and the radiated power per scan angle." />
+            <Row k="Feed" v={<>inset-fed microstrip, 1.12 mm line, as in Table I</>} why="The paper's CST model used a coax feed instead; this is the feed that would be built." />
+            <Row k="Substrate" v={<>Rogers 6010.2LM, εr {d.er}, tan δ 0.0023, {d.h} mm</>} />
+            <Row k="Finite check" v="full 4×4 on the 250 × 230 mm board, PML λ/4 out, at 0°, 22°, 42°" why="Edge elements see fewer neighbours; this measures how much that matters." />
+            <Row k="Patterns" v="array factor × embedded element pattern, any steering angle, taper or failure" why="Checked against the full-wave 4×4 at the three angles above." />
+          </>
+        )}
+        {s.kind === 'array' && tab === 'steps' && (
+          <ol className="sr-steps">
+            <li><b>Unit cell</b> at broadside, coarse then adaptive mesh. <span>0:22</span></li>
+            <li><b>Scan sweep</b>: active S11 at 0, 11, 22, 32, 42° (phase shift on the walls, same mesh). <span>0:18</span></li>
+            <li><b>Embedded element pattern</b> from the unit cell. <span>0:09</span></li>
+            <li><b>Finite 4×4</b>, domain decomposition, at 0°, 22°, 42°. <span>0:38</span></li>
+            <li><b>Patterns</b> for every steering angle from array factor × element pattern. <span>0:01</span></li>
+          </ol>
+        )}
+        {s.kind !== 'array' && tab === 'solver' && (
           <>
             <div className="sr-pick">
               <div className="sr-pick-h">Frequency-domain finite elements (FEM)</div>
@@ -68,7 +118,7 @@ export function SolveReport({ framed = true }: { framed?: boolean }) {
             </ul>
           </>
         )}
-        {tab === 'setup' && (
+        {s.kind !== 'array' && tab === 'setup' && (
           <>
             <Row k="Radiation boundary" v={<>PML, 6 layers, {pml.toFixed(0)} mm from the board on every side</>} why={<>λ/4 at the lowest frequency (2.1 GHz). Keeps the absorber out of the near field; reflections below −40 dB.</>} />
             <Row k="Copper" v={<>patch, feed and ground: 35 µm copper, σ = 5.8 × 10⁷ S/m, as a surface impedance</>} why="Far thinner than any element, so it's a sheet with the right loss instead of a meshed slab." />
@@ -121,7 +171,7 @@ export function SolveReport({ framed = true }: { framed?: boolean }) {
             </div>
           </>
         )}
-        {tab === 'steps' && (
+        {s.kind !== 'array' && tab === 'steps' && (
           <ol className="sr-steps">
             <li><b>Quick look</b>, 2.1–2.8 GHz on a coarse mesh: resonance near {(f0 + 24).toFixed(0)} MHz. <span>0:09</span></li>
             <li><b>Found where the answer was still moving</b>: the radiating edges and inset slots. <span>0:12</span></li>
