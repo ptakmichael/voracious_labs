@@ -12,7 +12,8 @@ export type XVar = 'Freq' | 'Theta' | 'ScanAng'
 export type Fn = 'dB' | 'mag' | 're' | 'im' | 'ang' | 'dB10' | ''
 export interface Params { phi?: number; steer?: number; freq?: number }
 
-export interface Solution { id: number; name: string; kind: Kind; d: Design; a?: ArrayDesign; sweep: [number, number, number] }
+/** A solved snapshot. `label` names the step (Paper, Tune 2, Your edit); `why` is the reason the solver took it. */
+export interface Solution { id: number; name: string; label: string; why: string[]; kind: Kind; d: Design; a?: ArrayDesign; sweep: [number, number, number] }
 
 export interface Quantity {
   name: string

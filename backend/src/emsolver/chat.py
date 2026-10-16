@@ -353,12 +353,14 @@ async def handle(run: Run | None, text: str, project_state: dict | None = None) 
 
 # ---------------------------------------------------------------- studio console (the solver answers the engineer)
 STUDIO_SYSTEM = """You are the solver kernel inside Smart EM, an HFSS-style EM simulation tool. The engineer typed a line \
-into the command console. Answer like a terse senior RF engineer: at most 3 short lines, numbers first, units always, no \
-markdown, no preamble. Use only numbers from the state JSON (design variables, latest solution, sensitivities, paper \
-issues); if something isn't solved yet, say so. The solver in this build is a fast physical model, not full-wave.
-To act, add lines of the form "$ <command>" using ONLY the console commands listed in the state (usage strings). Include \
-commands when the engineer asks for an action (plot, set, tune, solve, optimize, insert, steer), or as one or two \
-concrete next steps after a diagnosis. Examples: "$ set inset 9.10", "$ report dB(S(1,1))", "$ solve"."""
+into the command console. Reply like a senior RF engineer talking to a colleague: one to three short, complete, plain \
+sentences, numbers with units, no markdown, no preamble. Say what to change, by how much, and why. Use only numbers \
+from the state JSON (design variables, latest solution, sensitivities, paper issues); if something isn't solved yet, say \
+so. The solver in this build is a fast physical model, not full-wave.
+To act, add lines of the form "$ <command>" using ONLY the console commands in console_commands. For report commands \
+use report_syntax with quantity names exactly as listed in report_quantities (see report_examples); never invent a \
+quantity. Variable names for set are in variable_names. Include commands when the engineer asks for an action (plot, \
+set, tune, solve, optimize, insert, steer), or one or two concrete next steps after a diagnosis."""
 
 
 async def studio_ask(state: dict, text: str, history: list[dict], commands: list[str]) -> dict:

@@ -43,20 +43,28 @@ function Page({ doc, n, scale, t, marksAll, reading, near }: { doc: PDFDocumentP
   // Render once a page comes near the view, then keep it, so flipping back is instant.
   const [seen, setSeen] = useState(near)
   useEffect(() => { if (near) setSeen(true) }, [near])
+  // Each render draws into its own offscreen canvas and only the newest finished one is copied onto the page.
+  // Rendering straight into the visible canvas let a resize start a second render on it before the first was
+  // cancelled, and pdf.js then painted both: mirrored, overlapping text and pages at the wrong scale.
   useEffect(() => {
-    if (!seen) return
-    let task: ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | null = null
+    if (!seen || scale < 0.31) return
+    let task: ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | null = null, live = true
     doc.getPage(n).then((p) => {
-      const c = ref.current
-      if (!c) return
+      if (!live) return
       const dpr = window.devicePixelRatio || 1
       const vp = p.getViewport({ scale: scale * dpr })
-      c.width = vp.width; c.height = vp.height
-      c.style.width = `${vp.width / dpr}px`; c.style.height = `${vp.height / dpr}px`
-      task = p.render({ canvasContext: c.getContext('2d')!, viewport: vp })
-      task.promise.catch(() => {})
+      const off = document.createElement('canvas')
+      off.width = vp.width; off.height = vp.height
+      task = p.render({ canvasContext: off.getContext('2d')!, viewport: vp })
+      task.promise.then(() => {
+        const c = ref.current
+        if (!live || !c) return
+        c.width = off.width; c.height = off.height
+        c.style.width = `${vp.width / dpr}px`; c.style.height = `${vp.height / dpr}px`
+        c.getContext('2d')!.drawImage(off, 0, 0)
+      }).catch(() => {})
     })
-    return () => task?.cancel()
+    return () => { live = false; task?.cancel() }
   }, [doc, n, scale, seen])
   const marks = known ? MARKS.filter((m) => m.page === n && (t === null || t >= m.at)) : []
   const own = MARKS.filter((m) => m.page === n)

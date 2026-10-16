@@ -92,7 +92,7 @@ function NumberSource({ d, p, m }: { d: Design; p: Param; m: Metric }) {
   )
 }
 
-function EffectsPane({ onBuild }: { onBuild: (k: 'param' | 'metric') => void }) {
+export function EffectsPane({ onBuild }: { onBuild: (k: 'param' | 'metric') => void }) {
   const s = useDemo()
   const [hover, setHover] = useState<string | null>(null)
   const params = useMemo(() => allParams(s), [s.customParams]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -147,7 +147,7 @@ const FIELD_TEXT: Record<FieldKind, [string, string]> = {
   S: ['Power flow S = E × H', 'Inside, energy sloshes between the ends and the middle twice a cycle. On average it leaves upward out of the two ends: the radiated beam.'],
 }
 
-function FieldsPane() {
+export function FieldsPane() {
   const s = useDemo()
   const d = s.design
   const f = s.fq ?? Math.round(metrics(d).f0 * 1000) / 1000
@@ -201,7 +201,7 @@ function FieldsPane() {
 
 // ---------------------------------------------------------------- matrix + drill-down
 
-function Matrix({ onBuild }: { onBuild: (k: 'param' | 'metric') => void }) {
+export function Matrix({ onBuild }: { onBuild: (k: 'param' | 'metric') => void }) {
   const s = useDemo()
   const params = useMemo(() => allParams(s), [s.customParams]) // eslint-disable-line react-hooks/exhaustive-deps
   const mets = useMemo(() => allMetrics(s), [s.customMetrics]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -249,7 +249,7 @@ function Matrix({ onBuild }: { onBuild: (k: 'param' | 'metric') => void }) {
   )
 }
 
-function Drill() {
+export function Drill() {
   const s = useDemo()
   const [ref, size] = useSize<HTMLDivElement>()
   const params = allParams(s), mets = allMetrics(s)
@@ -279,7 +279,7 @@ function ErrLine({ e }: { e: string | null }) {
   return e ? <div className="b-err" role="alert">{e}</div> : null
 }
 
-function MetricBuilder({ onClose }: { onClose: () => void }) {
+export function MetricBuilder({ onClose }: { onClose: () => void }) {
   const s = useDemo()
   const [name, setName] = useState(METRIC_EXAMPLES[0].name)
   const [unit, setUnit] = useState(METRIC_EXAMPLES[0].unit)
@@ -320,7 +320,7 @@ function MetricBuilder({ onClose }: { onClose: () => void }) {
   )
 }
 
-function ParamBuilder({ onClose }: { onClose: () => void }) {
+export function ParamBuilder({ onClose }: { onClose: () => void }) {
   const s = useDemo()
   const [name, setName] = useState(PARAM_EXAMPLES[0].name)
   const [unit, setUnit] = useState(PARAM_EXAMPLES[0].unit)
@@ -368,7 +368,7 @@ function ParamBuilder({ onClose }: { onClose: () => void }) {
 
 // ---------------------------------------------------------------- pane
 
-function ContourPane() {
+export function ContourPane() {
   const s = useDemo()
   const dark = useTheme((t) => t.dark)
   const [ref, size] = useSize<HTMLDivElement>()

@@ -19,17 +19,25 @@ An HFSS-style workspace (`frontend/src/demo/studio/`): Project Manager tree and 
 - **Reports** (Results ▸ Create report, or `report …`): pick solution, category, quantity, function and sweep;
   rectangular, polar or Smith; hover readout, click for markers, Axes…, Export CSV. Quantities:
   `help report`.
-- **Import paper** (File, Ctrl+I, or drop a PDF): builds the design the paper describes, logs its
-  inconsistencies in Messages, solves it, and recreates every results figure as an ordinary report with the
-  paper's digitised curve dashed beside ours.
+- **Import paper** (File, Ctrl+I, or drop a PDF): the Context panel opens on the right and fills in every
+  parameter the paper states (value, unit, source, and what was corrected or flagged). Every results figure is
+  digitised into **Paper results**, plotted in our style before anything is built. Edit any value that came in
+  wrong, then **Build model** (built piece by piece, ports included), then **Run and compare**: our curves
+  (solid) land on the paper's (dashed).
+- **Plots and tools**: `plots` lists everything, `plot <name>` opens it in its own window: standard ones
+  (`s11`, `smith`, `z`, `vswr`, `pattern`, `gain3d`, `gain`, `eff`, `power`) and the analysis tools (`effects`,
+  `matrix`, `drill`, `contour`, `smithloops`, `fields`; arrays: `designer`, `uv`, `scan`, `active`, `pointing`,
+  `sll`). **Insights** (toolbar or Results) holds all of them in one tab.
+- **Why it solved it that way**: `plot history` shows every run as a tree with what changed and why the
+  optimiser did it; `plot solver` shows the solver, mesh, boundary and sweep choices and what drove each.
 - **Console**: commands (`help`) or plain questions ("why is the match poor?", "where does the beam point at
   42°?", "plot the pattern"). Questions go to the backend's AI provider with the live model and solution as
   context (`backend/.env`: `GROQ_API_KEY` or `ANTHROPIC_API_KEY`); without one, built-in answers computed from
   the model. Answers can carry commands: actions you asked for run, otherwise they show as one-click suggestions.
 
-Run sheet: `insert patch` → `solve` → `report dB(S(1,1))` → click the dip for a marker → `why is the match
-poor?` → click the suggested `set inset …` → `optimize` → `report S(1,1) smith`. Then drop either paper in this
-folder and open the Fig. reports under Results.
+Run sheet: drop a paper from this folder → check the Context summary and Paper results → Build model → Run and
+compare → `optimize` → `plot history` → `plot gain3d` → Insights. Without a paper: `insert patch` → `solve` →
+`report dB(S(1,1))` → `why is the match poor?` → click the suggested fix.
 
 ## Classic demo (`?classic`)
 

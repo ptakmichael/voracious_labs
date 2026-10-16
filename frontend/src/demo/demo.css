@@ -849,7 +849,7 @@ kbd { font: 11px var(--mono); border: 1px solid var(--ink-2); border-bottom-widt
 .ad-el.off span { color: var(--sig); text-shadow: none; font-size: 13px; }
 .ad-el:hover { border-color: var(--ink); }
 /* .pane is the size container and can't query itself, so the narrow layout moves the children: the view takes both right-hand columns. */
-@container (max-width: 980px) { .ad-view { grid-column: 2 / -1; } .ad-side { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--rule); } }
+@container (max-width: 1100px) { .ad-view { grid-column: 2 / -1; } .ad-side { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--rule); } }
 .pane.uv { display: flex; flex-wrap: wrap; gap: 20px; padding: 16px; align-content: start; overflow: auto; }
 .uv-svg { cursor: crosshair; flex: none; }
 .uv-svg text { font-family: var(--mono); }

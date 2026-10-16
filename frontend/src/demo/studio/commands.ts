@@ -10,7 +10,8 @@ import { useModel, validate } from '../modeler/model'
 import { radEff } from '../paperPhysics'
 import { useTheme } from '../theme'
 import { addMarker, exportCsv, seriesNow } from './Report'
-import { type Params, type Trace, type XVar, parseExpr, traceLabel } from './quantities'
+import { type Params, type Trace, type XVar, available, parseExpr, traceLabel } from './quantities'
+import { CATALOG, isTool, plotDef } from './catalog'
 import { newTraceId, traceStyle, useStudio } from './store'
 
 const S = () => useStudio.getState()
@@ -65,6 +66,19 @@ function traceArgs(args: string[]): { traces: Trace[]; type?: 'rect' | 'polar' |
 }
 
 const activeReport = () => S().reports.find((r) => r.id === S().active)
+
+/** Open any plot or tool by its catalog id: standard plots as reports, 3D gain and tools in their own windows. */
+export function openPlot(id: string, args: string[] = []) {
+  const p = plotDef(id), s = S()
+  if (!p) { err(`No plot ${id}. Try: plots`); return }
+  if (!s.kind) { err('No design yet. insert patch | insert array | import paper'); return }
+  if (!p.kinds.includes(s.kind)) { err(`${p.name} is for ${p.kinds.join(' / ')} designs.`); return }
+  const num = (k: string) => { const m = args.map((a) => new RegExp(`^${k}=([-\\d.]+)$`, 'i').exec(a)).find(Boolean); return m ? +m[1] : undefined }
+  const steer = num('steer') ?? s.a.theta
+  if (p.report) { const c = p.report(s.kind, steer); s.print('sys', `$ ${c}`); void runLine(c, false); return }
+  if (p.id === 'gain3d') { s.open(`g3d|${num('freq') ?? (s.kind === 'array' ? 2.43 : +((s.setup.f1 + s.setup.f2) / 2).toFixed(3))}|${steer}`); return }
+  s.open(`tool:${p.id}`)
+}
 
 interface Cmd { name: string; usage: string; help: string; run: (a: string[]) => void | Promise<void> }
 export const COMMANDS: Cmd[] = [
@@ -122,6 +136,18 @@ export const COMMANDS: Cmd[] = [
     const at = a[0] === 'min' ? 'min' : a[0] === 'max' || !a[0] ? 'max' : +a[0]
     addMarker(rep, at as 'max' | 'min' | number, seriesNow(rep))
   } },
+  { name: 'plot', usage: 'plot <name> [freq=] [steer=]', help: 'open any plot or tool (see: plots)', run: (a) => { if (!a[0]) { err('usage: plot <name>   names: plots'); return } openPlot(a[0], a.slice(1)) } },
+  { name: 'plots', usage: 'plots', help: 'list every plot and tool', run: () => {
+    const k = S().kind ?? 'patch'
+    for (const g of ['Standard', 'Insight', 'Array', 'Solve'] as const) {
+      const ps = CATALOG.filter((p) => p.group === g && p.kinds.includes(k))
+      if (ps.length) out(`${g.padEnd(9)} ${ps.map((p) => p.id + (isTool(p) ? '*' : '')).join('  ')}`)
+    }
+    out('* opens in its own window · e.g.  plot gain3d   plot effects   plot history')
+  } },
+  { name: 'build', usage: 'build', help: 'build the model from the context summary', run: async () => { if (!S().ctx?.which) { err('No paper context. import paper'); return } await S().buildFromContext() } },
+  { name: 'run', usage: 'run', help: 'solve and overlay on the paper figures', run: async () => { if (S().ctx?.which) await S().runContext(); else await S().solve() } },
+  { name: 'context', usage: 'context', help: 'show the context panel', run: () => { const c = S().ctx; if (!c) { err('No context uploaded.'); return } S().set({ ctx: { ...c, open: !c.open } }) } },
   { name: 'reports', usage: 'reports', help: 'list reports', run: () => { const r = S().reports; if (!r.length) out('No reports.'); r.forEach((x) => out(`${x.id.padEnd(4)} ${x.name}`)) } },
   { name: 'open', usage: 'open <model|paper|report>', help: 'bring a window forward', run: (a) => {
     const k = a.join(' ').toLowerCase()
@@ -158,6 +184,12 @@ export function snapshot() {
     setup: s.setup, goal: s.kind === 'array' ? { activeS11_max_dB: ARRAY_GOAL.active, sll_max_dB: ARRAY_GOAL.sll, scan_deg: 42, band_GHz: [GOAL.f1, GOAL.f2] } : { S11_max_dB: GOAL.db, band_GHz: [GOAL.f1, GOAL.f2] },
     solved_runs: s.sols.length, design_changed_since_last_run: s.dirty,
     reports: s.reports.map((r) => r.name), paper_issues: s.issues.map((i) => `${i.title}: ${i.fix}`),
+    report_syntax: 'report <fn>(<quantity>) [<fn>(<quantity>) …] [vs Freq|Theta|ScanAng] [phi=<deg>] [steer=<deg>] [freq=<GHz>] [rect|polar|smith]',
+    report_quantities: available(s.kind ?? 'patch').map((q) => `${q.name} (fns: ${q.fns.map((f) => f || 'none').join('/')}; vs ${q.xs.join('/')}${q.params.length ? `; params ${q.params.join(',')}` : ''})`),
+    report_examples: ['report dB(S(1,1))', 'report S(1,1) smith', 'report RealizedGainTotal vs Theta phi=90 polar', 'report dB(ActiveS(1,1)) vs ScanAng', 'report PeakRealizedGain vs ScanAng'],
+    variable_names: vars().map((v) => v.key),
+    plot_names: CATALOG.filter((p) => p.kinds.includes(s.kind ?? 'patch')).map((p) => `${p.id}: ${p.name}`),
+    plot_usage: 'plot <name> opens any of plot_names (3D gain, Smith, analysis tools, run history)',
   }
   if (last) {
     const m = metrics(last.d)
@@ -210,6 +242,11 @@ export function localAnswer(q: string): { text: string; act: boolean } {
   if (near(q, /\b(build|make|insert|create|new)\b.*\b(patch|antenna)\b/)) return go('insert patch')
   if (near(q, /\b(optimi[sz]e|tune it|meet the goal|fix (it|the match))\b/)) return go('optimize')
   if (near(q, /^(solve|simulate|analy[sz]e|run)\b/)) return go('solve')
+  if (near(q, /\b(plot|show|graph|draw|open)\b/) && near(q, /3d|three.?d/)) return go('plot gain3d')
+  if (near(q, /\b(plot|show|open)\b/)) {
+    const tool = [['effect', 'effects'], ['what moves', 'matrix'], ['contour|good designs', 'contour'], ['field', 'fields'], ['loop', 'smithloops'], ['history|tree|version', 'history'], ['why|choice|solver', 'solver'], ['designer', 'designer'], ['u-?v', 'uv'], ['scan perf', 'scan']].find(([re]) => near(q, new RegExp(re)))
+    if (tool) return go(`plot ${tool[1]}`)
+  }
   if (near(q, /\b(plot|show|graph|draw)\b/)) {
     if (near(q, /smith/)) return go('report S(1,1) smith')
     if (near(q, /impedance|z11|resistance/)) return go('report re(Z(1,1)) im(Z(1,1))')

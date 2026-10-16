@@ -5,8 +5,13 @@ import { Props, TOOLS } from '../modeler/Modeler'
 import { Ico, type TNode, Tree } from '../modeler/Tree'
 import { PaperView } from '../PaperView'
 import { useTheme } from '../theme'
-import { bindFileInput, runLine, vars } from './commands'
+import { startBridge } from './bridge'
+import { bindFileInput, openPlot, runLine, vars } from './commands'
 import { Console } from './Console'
+import { ContextPanel, PaperResults } from './Context'
+import { CATALOG } from './catalog'
+import { Gain3D } from './Gain3D'
+import { InsightsDoc, ToolView } from './Insights'
 import { ReportView, TraceDialog, exportCsv } from './Report'
 import { useStudio } from './store'
 import './studio.css'
@@ -46,6 +51,7 @@ function MenuBar({ onReport }: { onReport: () => void }) {
       { label: 'Isometric', run: () => m.setView('iso') }, { label: 'Top', run: () => m.setView('top') }, { label: 'Front', run: () => m.setView('front') },
       { label: '', sep: true },
       { label: th.dark ? 'Light theme' : 'Dark theme', run: th.toggle },
+      { label: 'Context panel', off: !st.ctx, run: () => st.ctx && st.set({ ctx: { ...st.ctx, open: !st.ctx.open } }) },
     ],
     Draw: TOOLS.map((t) => ({ label: t.name, key: t.key, run: () => { st.open('model'); m.setTool(t.t) } })),
     Simulation: [
@@ -57,7 +63,13 @@ function MenuBar({ onReport }: { onReport: () => void }) {
       { label: 'Create report…', off: !st.kind, run: onReport },
       { label: 'S-parameter report', off: !st.kind, run: () => void runLine('report dB(S(1,1))') },
       { label: 'Smith chart', off: !st.kind, run: () => void runLine('report S(1,1) smith') },
-      { label: 'Far-field pattern', off: !st.kind, run: () => void runLine(st.kind === 'array' ? 'report RealizedGainTotal vs Theta' : 'report RealizedGainTotal vs Theta phi=90') },
+      { label: 'Far-field pattern', off: !st.kind, run: () => openPlot('pattern') },
+      { label: '3D gain', off: !st.kind, run: () => openPlot('gain3d') },
+      { label: '', sep: true },
+      { label: 'Insights (all tools)', off: !st.kind, run: () => st.open('insights') },
+      { label: 'Run history and reasons', off: !st.kind, run: () => openPlot('history') },
+      { label: 'Why the solver chose this', off: !st.kind, run: () => openPlot('solver') },
+      { label: 'Paper results', off: !st.reports.some((r) => r.fig), run: () => st.open('paperres') },
     ],
     Help: [{ label: 'Commands', run: () => void runLine('help') }],
   }
@@ -97,6 +109,7 @@ function Toolbar({ onReport }: { onReport: () => void }) {
       <button className="txt go" disabled={!!st.busy} onClick={() => void runLine('solve')}>▶ Analyze</button>
       <button className="txt" disabled={!!st.busy || !st.kind} onClick={() => void runLine('optimize')}>Optimize</button>
       <button className="txt" disabled={!st.kind} onClick={onReport}>＋ Report</button>
+      <button className="txt" disabled={!st.kind} onClick={() => st.open('insights')}>◇ Insights</button>
     </div>
   )
 }
@@ -125,10 +138,14 @@ function useTree(onReport: () => void): TNode[] {
         { id: 'bnd', label: 'Boundaries', icon: Ico.folder, children: [{ id: 'rad', label: <>Rad1 <span className="tr-dim">· radiation</span></>, icon: Ico.boundary }] },
         { id: 'exc', label: <>Excitations <span className="tr-dim">{ports.length}</span></>, icon: Ico.folder, open: ports.length < 5, children: ports.map(obj) },
         { id: 'mesh', label: <>Mesh <span className="tr-dim">· adaptive</span></>, icon: Ico.mesh },
-        { id: 'ana', label: 'Analysis', icon: Ico.folder, children: [{ id: 'su', label: <>Setup1 <span className="tr-dim">· {st.setup.f1}–{st.setup.f2} GHz</span></>, icon: Ico.analysis, selected: st.sel === 'setup', onClick: () => st.set({ sel: 'setup' }), badge: last ? `${st.sols.length} run${st.sols.length > 1 ? 's' : ''}` : undefined }] },
+        { id: 'ana', label: 'Analysis', icon: Ico.folder, children: [{ id: 'su', label: <>Setup1 <span className="tr-dim">· {st.setup.f1}–{st.setup.f2} GHz</span></>, icon: Ico.analysis, selected: st.sel === 'setup', onClick: () => st.set({ sel: 'setup' }), badge: last ? `${st.sols.length} run${st.sols.length > 1 ? 's' : ''}` : undefined },
+          { id: 'hist', label: 'Run history', icon: Ico.results, muted: !last, selected: st.active === 'tool:history', onClick: () => openPlot('history') }] },
         { id: 'opt', label: 'Optimetrics', icon: Ico.folder, children: [{ id: 'o1', label: 'Optimization1', icon: Ico.analysis, selected: st.sel === 'opt', onClick: () => st.set({ sel: 'opt' }) }] },
         { id: 'res', label: 'Results', icon: Ico.results, children: [
-          ...st.reports.map((r) => ({ id: r.id, label: r.name, icon: Ico.results, selected: st.active === r.id, onClick: () => st.open(r.id) })),
+          ...(st.reports.some((r) => r.fig) ? [{ id: 'pres', label: <>Paper results <span className="tr-dim">{st.reports.filter((r) => r.fig).length}</span></>, icon: Ico.folder, open: false, selected: st.active === 'paperres', onClick: () => st.open('paperres'),
+            children: st.reports.filter((r) => r.fig).map((r) => ({ id: r.id, label: r.name, icon: Ico.results, selected: st.active === r.id, onClick: () => st.open(r.id) })) }] : []),
+          ...st.reports.filter((r) => !r.fig).map((r) => ({ id: r.id, label: r.name, icon: Ico.results, selected: st.active === r.id, onClick: () => st.open(r.id) })),
+          { id: 'ins', label: 'Insights', icon: Ico.design, selected: st.active === 'insights', onClick: () => st.open('insights') },
           { id: 'newrep', label: <span className="tr-dim">Create report…</span>, onClick: onReport },
         ] },
         ...(st.paper ? [{ id: 'paper', label: <>{st.paper.name.replace(/\.pdf$/i, '').slice(0, 26)} <span className="tr-dim">· source</span></>, icon: Ico.folder, selected: st.active === 'paper', onClick: () => st.open('paper') }] : []),
@@ -194,7 +211,8 @@ function PropGrid() {
 
 function DocTabs() {
   const st = useStudio()
-  const title = (d: string) => d === 'model' ? '3D Modeler' : d === 'paper' ? st.paper?.name ?? 'Paper' : st.reports.find((r) => r.id === d)?.name ?? d
+  const title = (d: string) => d === 'model' ? '3D Modeler' : d === 'paper' ? st.paper?.name ?? 'Paper' : d === 'paperres' ? 'Paper results' : d === 'insights' ? 'Insights'
+    : d.startsWith('tool:') ? CATALOG.find((p) => `tool:${p.id}` === d)?.name ?? d : d.startsWith('g3d|') ? `3D gain · ${d.split('|')[1]} GHz${st.kind === 'array' ? ` · ${d.split('|')[2]}°` : ''}` : st.reports.find((r) => r.id === d)?.name ?? d
   return (
     <div className="st-tabs">
       {st.docs.map((d) => (
@@ -227,6 +245,10 @@ function Doc() {
         <PaperView data={st.paper.data} name={st.paper.name} t={null} reading={false} onInfo={(_n, _k, which) => void st.paperRead(which ?? null)} />
       </div>}
       {rep && <ReportView key={rep.id} rep={rep} />}
+      {st.active === 'paperres' && <PaperResults />}
+      {st.active === 'insights' && <InsightsDoc />}
+      {st.active.startsWith('tool:') && <div className="st-tool"><ToolView key={st.active} id={st.active.slice(5)} /></div>}
+      {st.active.startsWith('g3d|') && <Gain3D sol={st.sols[st.sols.length - 1]} freq={+st.active.split('|')[1]} steer={+st.active.split('|')[2]} />}
     </div>
   )
 }
@@ -253,6 +275,7 @@ export default function Studio() {
   const tree = useTree(() => setDlg(true))
   const [dock, setDock] = useState(true)
   useEffect(() => { bindFileInput(file.current) }, [])
+  useEffect(() => startBridge(), [])
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName
@@ -281,7 +304,7 @@ export default function Studio() {
       onDrop={(e) => { e.preventDefault(); const f = [...e.dataTransfer.files].find((x) => x.name.toLowerCase().endsWith('.pdf')); if (f) void st.importPaper(f) }}>
       <MenuBar onReport={() => setDlg(true)} />
       <Toolbar onReport={() => setDlg(true)} />
-      <div className="st-body">
+      <div className={`st-body${st.ctx?.open ? ' cx-on' : ''}`}>
         <aside className="st-left">
           <div className="st-h">Project Manager</div>
           <div className="st-tree"><Tree nodes={tree} /></div>
@@ -296,6 +319,7 @@ export default function Studio() {
             <Console />
           </div>
         </main>
+        <ContextPanel />
       </div>
       <StatusBar />
       <input ref={file} type="file" accept="application/pdf" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) void st.importPaper(f) }} />
