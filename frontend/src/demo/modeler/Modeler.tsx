@@ -5,7 +5,7 @@ import { Ico, type TNode, Tree } from './Tree'
 
 const Viewport = lazy(() => import('./Viewport').then((m) => ({ default: m.Viewport })))
 
-const TOOLS: { t: Tool; key: string; name: string; icon: ReactNode }[] = [
+export const TOOLS: { t: Tool; key: string; name: string; icon: ReactNode }[] = [
   { t: 'select', key: 'S', name: 'Select / move', icon: <svg width="16" height="16" viewBox="0 0 16 16"><path d="M3 2l9 5-4 1-1.5 4z" fill="currentColor" /></svg> },
   { t: 'box', key: 'B', name: 'Box', icon: <svg width="16" height="16" viewBox="0 0 16 16"><path d="M2 5l6-3 6 3v6l-6 3-6-3zM2 5l6 3 6-3M8 8v6" fill="none" stroke="currentColor" strokeWidth="1.2" /></svg> },
   { t: 'cyl', key: 'C', name: 'Cylinder', icon: <svg width="16" height="16" viewBox="0 0 16 16"><ellipse cx="8" cy="4" rx="5" ry="2" fill="none" stroke="currentColor" strokeWidth="1.2" /><path d="M3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4" fill="none" stroke="currentColor" strokeWidth="1.2" /></svg> },
@@ -127,7 +127,7 @@ function NumField({ label, value, onCommit, disabled }: { label: string; value: 
   )
 }
 
-function Props() {
+export function Props() {
   const m = useModel()
   const o = m.objs.find((x) => x.id === m.sel)
   if (!o) return <div className="props-empty">Select an object to edit it. New objects use the material in the toolbar.</div>

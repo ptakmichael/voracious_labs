@@ -4,7 +4,7 @@ const R_CIRCLES = [0.2, 0.5, 1, 2, 5]
 const X_ARCS = [0.2, 0.5, 1, 2, 5]
 
 /** Constant-resistance circles and reactance arcs, clipped to the unit circle. */
-function SmithGrid({ cx, cy, R, id }: { cx: number; cy: number; R: number; id: string }) {
+export function SmithGrid({ cx, cy, R, id }: { cx: number; cy: number; R: number; id: string }) {
   return (
     <>
       <defs><clipPath id={id}><circle cx={cx} cy={cy} r={R} /></clipPath></defs>

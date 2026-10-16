@@ -1,15 +1,39 @@
-# Pitch-video demo
+# Smart EM demo
 
-An interactive, front-end-only demo at `/demo.html`. Every number comes from a mock patch model in
-`frontend/src/demo/model.ts`; no solver or backend is called.
+Front-end demo at `/demo.html`. The solver is a fast physical model (cavity + transmission line for the patch,
+array factor + coupling for arrays), not full-wave.
 
 ```bash
-cd frontend
-npm install
-npm run dev            # open http://localhost:5173/demo.html, full screen (F11), 1920×1080
+cd frontend && npm install && npm run dev        # http://localhost:5173/demo.html
+cd backend && uv run uvicorn emsolver.app:app --port 8000   # optional: AI answers in the console
 ```
 
-`?name=Acme` in the URL changes the wordmark. "reset" in the top bar starts over.
+## Studio (default)
+
+An HFSS-style workspace (`frontend/src/demo/studio/`): Project Manager tree and property grid on the left, tabbed
+3D Modeler and report windows in the middle, and a command line at the bottom.
+
+- **Design**: Insert a patch or a 4×4 array, or draw one (B box, R rectangle, P port). Design variables live
+  under Variables; editing one rebuilds the geometry.
+- **Analyze** (F5) solves Setup1; every run is kept as a solution. **Optimize** runs Optimetrics toward the goal.
+- **Reports** (Results ▸ Create report, or `report …`): pick solution, category, quantity, function and sweep;
+  rectangular, polar or Smith; hover readout, click for markers, Axes…, Export CSV. Quantities:
+  `help report`.
+- **Import paper** (File, Ctrl+I, or drop a PDF): builds the design the paper describes, logs its
+  inconsistencies in Messages, solves it, and recreates every results figure as an ordinary report with the
+  paper's digitised curve dashed beside ours.
+- **Console**: commands (`help`) or plain questions ("why is the match poor?", "where does the beam point at
+  42°?", "plot the pattern"). Questions go to the backend's AI provider with the live model and solution as
+  context (`backend/.env`: `GROQ_API_KEY` or `ANTHROPIC_API_KEY`); without one, built-in answers computed from
+  the model. Answers can carry commands: actions you asked for run, otherwise they show as one-click suggestions.
+
+Run sheet: `insert patch` → `solve` → `report dB(S(1,1))` → click the dip for a marker → `why is the match
+poor?` → click the suggested `set inset …` → `optimize` → `report S(1,1) smith`. Then drop either paper in this
+folder and open the Fig. reports under Results.
+
+## Classic demo (`?classic`)
+
+The original scripted pitch-video flow. `?name=Acme` in the URL changes the wordmark. "reset" in the top bar starts over.
 
 The Lego build sound (`frontend/public/sfx/lego-build.mp3`, from `Lego building sfx.mp3`) plays while the 3D model flies together, with the minikit jingle on the moment it's built. Turn it off with "sound on" in the top bar.
 

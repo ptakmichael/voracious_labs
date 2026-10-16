@@ -21,18 +21,18 @@ command or button to use. Supported chat commands: use FEM / use openEMS, refine
 cross-check, approve, stop, pause, resume, set tolerance <0.1|0.03|0.01>."""
 
 
-async def ask_claude(state: dict, text: str, history: list[dict]) -> str | None:
+async def ask_claude(state: dict, text: str, history: list[dict], system: str = CHAT_SYSTEM) -> str | None:
     """Free-form answer from the active LLM provider (name kept for the existing call sites)."""
     if not have_api_key():
         return None
     if provider() in COMPAT:
-        return await ask_compat(provider(), state, text, history)
+        return await ask_compat(provider(), state, text, history, system)
     try:
         import anthropic
         client = anthropic.AsyncAnthropic()
         convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-8:])
         resp = await client.beta.messages.create(
-            model=MODEL, max_tokens=2000, system=CHAT_SYSTEM,
+            model=MODEL, max_tokens=2000, system=system,
             output_config={"effort": "low"},
             betas=["server-side-fallback-2026-07-01"], fallbacks="default",
             messages=[{"role": "user", "content": f"Current state:\n{json.dumps(state, default=str)}\n\n"
@@ -55,14 +55,14 @@ async def ask_claude(state: dict, text: str, history: list[dict]) -> str | None:
         return f"(Claude call failed: {type(e).__name__}. Details are in the backend log.)"
 
 
-async def ask_compat(p: str, state: dict, text: str, history: list[dict]) -> str | None:
+async def ask_compat(p: str, state: dict, text: str, history: list[dict], system: str = CHAT_SYSTEM) -> str | None:
     name = PROVIDER_LABEL[p]
     try:
         client = compat_client(p, max_retries=2)
         convo = "\n".join(f"{m['role']}: {m['text']}" for m in history[-6:])
         resp = await client.chat.completions.create(
-            model=COMPAT[p]["model"], max_tokens=400,
-            messages=[{"role": "system", "content": CHAT_SYSTEM},
+            model=COMPAT[p]["model"], max_tokens=400 if system is CHAT_SYSTEM else 1500,
+            messages=[{"role": "system", "content": system},
                       {"role": "user", "content": f"Current state:\n{json.dumps(state, default=str)}\n\n"
                                                   f"Recent conversation:\n{convo}\n\nEngineer: {text}"}])
         return (resp.choices[0].message.content or "").strip() or None
@@ -349,3 +349,22 @@ async def handle(run: Run | None, text: str, project_state: dict | None = None) 
             action = "noted"
     await run.say(reply)
     return {"reply": reply, "action": action}
+
+
+# ---------------------------------------------------------------- studio console (the solver answers the engineer)
+STUDIO_SYSTEM = """You are the solver kernel inside Smart EM, an HFSS-style EM simulation tool. The engineer typed a line \
+into the command console. Answer like a terse senior RF engineer: at most 3 short lines, numbers first, units always, no \
+markdown, no preamble. Use only numbers from the state JSON (design variables, latest solution, sensitivities, paper \
+issues); if something isn't solved yet, say so. The solver in this build is a fast physical model, not full-wave.
+To act, add lines of the form "$ <command>" using ONLY the console commands listed in the state (usage strings). Include \
+commands when the engineer asks for an action (plot, set, tune, solve, optimize, insert, steer), or as one or two \
+concrete next steps after a diagnosis. Examples: "$ set inset 9.10", "$ report dB(S(1,1))", "$ solve"."""
+
+
+async def studio_ask(state: dict, text: str, history: list[dict], commands: list[str]) -> dict:
+    """Free-form question from the studio console. Returns {answer: None} when no provider is configured, so the
+    browser falls back to its built-in answers."""
+    if not have_api_key():
+        return {"answer": None, "provider": None}
+    answer = await ask_claude({**state, "console_commands": commands}, text, history, STUDIO_SYSTEM)
+    return {"answer": answer, "provider": PROVIDER_LABEL.get(provider(), provider())}

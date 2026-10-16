@@ -41,6 +41,13 @@ class ChatReq(BaseModel):
     project: dict | None = None
 
 
+class StudioAskReq(BaseModel):
+    text: str
+    state: dict = {}
+    history: list[dict] = []
+    commands: list[str] = []
+
+
 class VariableReq(BaseModel):
     name: str
     expression: str
@@ -175,6 +182,11 @@ async def events(rid: str):
 @app.post("/api/chat")
 async def chat_setup(req: ChatReq):
     return await chat.handle(None, req.text, req.project)
+
+
+@app.post("/api/studio/ask")
+async def studio_ask(req: StudioAskReq):
+    return await chat.studio_ask(req.state, req.text, req.history, req.commands)
 
 
 @app.post("/api/runs/{rid}/chat")

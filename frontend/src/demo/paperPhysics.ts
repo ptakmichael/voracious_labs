@@ -13,7 +13,7 @@ const D2R = Math.PI / 180
 /** Loss tangent of the board: Rogers 6010.2LM for the high-εr element, FR-4 otherwise. */
 export const tanD = (d: Design) => (d.er > 8 ? 0.0023 : 0.02)
 /** Conductor Q from the skin depth in 35 µm copper. */
-const qc = (d: Design, f: number) => d.h / (1.33e-3 * Math.sqrt(2.4 / f)) // skin depth 1.33 µm at 2.4 GHz
+export const qc = (d: Design, f: number) => d.h / (1.33e-3 * Math.sqrt(2.4 / f)) // skin depth 1.33 µm at 2.4 GHz
 
 /** Radiation efficiency from the Q split: 1/Q = 1/Qrad + tanδ + 1/Qc. A resonator's split barely moves with
  * frequency, so this is nearly flat across the band. */

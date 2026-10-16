@@ -30,6 +30,7 @@ export const MATERIALS: Record<string, Mat> = {
   'FR-4': { eps: 4.4, tand: 0.02, metal: false, color: '#a9b48f' },
   'Rogers RO4003C': { eps: 3.55, tand: 0.0027, metal: false, color: '#9fb3c8' },
   'Rogers RT5880': { eps: 2.2, tand: 0.0009, metal: false, color: '#d2c6a2' },
+  'Rogers 6010.2LM': { eps: 10.2, tand: 0.0023, metal: false, color: '#b9a98a' },
   copper: { eps: 1, tand: 0, metal: true, color: '#c07a36' },
   PEC: { eps: 1, tand: 0, metal: true, color: '#8d8a83' },
 }
