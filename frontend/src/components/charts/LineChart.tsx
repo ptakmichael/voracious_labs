@@ -93,9 +93,9 @@ export function LineChart(p: Props) {
         </g>
       </svg>
       {p.legend && (
-        <div className="row wrap small muted" style={{ gap: 16, paddingLeft: m.l }}>
+        <div className="row wrap small muted" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '4px 16px', paddingLeft: m.l }}>
           {p.series.filter((s) => s.label).map((s) => (
-            <span key={s.label} className="row" style={{ gap: 6 }}>
+            <span key={s.label} className="row" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <svg width="22" height="8"><line x1="0" x2="22" y1="4" y2="4" stroke={s.color} strokeWidth="2.5" strokeDasharray={s.dash} /></svg>{s.label}
             </span>
           ))}
